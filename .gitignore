@@ -16,7 +16,12 @@ env/
 
 # Output
 output/
+reports/
 *.log
+
+# Transient debug dumps (ad-hoc Jira pulls)
+prod_issues.json
+prod_issues_extracted.txt
 
 # IDE
 .vscode/
