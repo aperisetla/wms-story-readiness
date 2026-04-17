@@ -350,78 +350,65 @@ High-priority, frequent failure with solid root cause, but cannot be committed u
 ### WR-1164 - API for QIS and HJ
 Project: WMS Retail | Type: Story | Priority: Medium | Labels: APR, Refinement | Parent: WR-907 (Small / Medium Demand 2026 Q2) | Status: Backlog
 
-**Description (as written):** Numerous systems are having slowness and performance issues because of the process of having EDW pull from HJ every 15 minutes, then QIS pull from EDW every 15 minutes. Global Laboratories and other systems are being bogged down by the double pull. Build an API that the QIS system can call on demand to pull near-live data directly from HJ.
-**Acceptance Criteria (as written):** The new API call from HJ to QIS will be on demand (not a recurring job running every 15 minutes). The data retrieved from the API call will be the same data currently retrieved by the QIS pull from EDW. The API will not slow down any other system.
+**Description (as written):** Numerous systems are having slowness and performance issues because of the process of having EDW pull from HJ every 15 minutes then having QIS pull from EDW every 15 minutes. Global Laboratories and other systems are being bogged down with the double pull that we are doing. Build an API that the QIS system can pull on demand, near live time data from HJ.
+**Acceptance Criteria (as written):** The new API call from HJ to QIS will be on demand (not a recurring job which runs every 15 minutes). The data retrieved from the API call will be the same data retrieved from the current QIS pull from EDW. The API will not slow down any other system.
 
 🟡 Missing or Unclear Details
-- **Data contract is undefined**: AC says "same data as the current QIS pull from EDW" but the EDW view / query / column list driving that pull is not attached. Without that catalogue (table/view names, columns, filters, joins) DEV cannot define the API response shape.
-- **"Near-live" SLA is not a number**: confirm the response-time target (e.g., p95 < 2 s, max payload size, max rows) so the HJ query path and any required indexes can be validated against live transactional load.
-- **Request volume and concurrency**: "on demand" has no bound - peak requests / hour, max concurrent QIS callers, expected payload size per call. Drives both HJ DB capacity and QIS-side batching.
-- **Authentication and authorisation**: API key, mTLS, OAuth client-credentials, or HJ service account? Who owns the credential and rotation procedure? Not mentioned in AC.
-- **Scope on the HJ side**: which HJ tables does the existing EDW pull read? (Candidates: `t_inventory`, `t_stored_item`, `t_item`, `t_location`, quality-hold tables.) Confirmation needed so the API does not have to read the whole schema.
-- **Scope of "QIS"**: all QIS workflows, or only the specific screens / jobs that are currently slow? Affects whether this is a single endpoint or several.
-- **What about the EDW -> HJ pull?** The "double pull" framing names two hops (HJ->EDW every 15 min, EDW->QIS every 15 min). AC only covers the QIS side. Is the HJ->EDW pull also being removed / changed, or does EDW still pull for other consumers? If the HJ->EDW pull stays, the root cause ("Global Laboratories bogged down") is only half-fixed.
-- **Cutover / dual-run plan**: timeline for deprecating the existing QIS-pulls-from-EDW path, how long both paths run in parallel, reconciliation of results during that window.
-- **Fallback on API outage**: today QIS implicitly has EDW as a fallback; if that path is removed, what does QIS do on HJ API failure - fail the user action, queue a retry, fall back to a cached dataset?
-- **Observability expectations**: request rate, error rate, p95 response time, per-caller quotas - none are specified as AC, but needed for the "will not slow down any other system" clause to be testable.
-- **Label / workflow state**: current labels are `APR`, `Refinement`; ticket is not yet in `Estimate`, and status is Backlog (not Ready). Expect promotion to `Estimate` and a Ready transition before sprint commit; current backlog automation keyed on `Estimate` will skip this ticket as-is.
-- **No subtasks visible** (DEV / UT / QA / CR1 / CR2 / UAT) and no story-point estimate.
+The ticket, at ~80 words of description and three short AC sentences, does not yet carry enough detail for sizing or build. The single existing comment on this story (Scott Balkonis, 18-Feb-2026) says simply: *"Need detail on what data is needed."* That is still the primary gap.
+- **Data contract is undefined**: AC says "same data as the current QIS pull from EDW" but the current EDW query / view / table list driving the QIS pull is not attached to the ticket. Without that catalogue, the API payload cannot be defined.
+- **"Near-live" SLA is not a number**: no target response time, max payload size, or row-count bound is stated, so the HJ-side query path cannot be validated.
+- **Request volume is not stated**: "on demand" removes the fixed 15-min cadence but does not bound concurrency or peak RPS. This is required to confirm AC 3 ("will not slow down any other system").
+- **Authentication model**: not mentioned. QIS ↔ HJ does not have an existing contract that could be reused without confirmation from the integrations team.
+- **Scope of the "double pull" fix**: AC 2 describes only the QIS→EDW leg. The description also flags the HJ→EDW leg as contributing to the bog-down; whether that leg is in scope, out of scope, or handled by a separate ticket is not stated.
+- **Fallback on API outage**: the existing QIS→EDW pull is the implicit fallback today; the cutover plan (dual-run, deprecation of the EDW path) is not defined.
+- **Workflow state**: labels are `APR`, `Refinement`; status is Backlog. For this story to be picked up by the `Estimate`-label automation used by the other WW/WR readiness work, it needs to be promoted to `Estimate` and transitioned to Ready. No subtasks (DEV / UT / QA / CR1 / CR2 / UAT) or story-point estimate are attached.
 
 🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
-- **Read contention during active pick / putaway waves**: QIS on-demand reads against `t_inventory` / `t_stored_item` / `t_location` at the same time RF is updating those tables can block transactional work. Use a read-committed-snapshot or replica strategy; the API should never hold page locks on hot tables.
-- **Mid-transaction reads**: a receipt or move may span several row updates; QIS may see a partially-applied state. Document the isolation guarantee (e.g., snapshot vs read-uncommitted) and whether QIS can tolerate it.
-- **Multi-site queries**: QIS today likely pulls for all sites from EDW. Does the new API accept a site filter? If not, response size per call can be large and affects SLA.
-- **Quality holds / ok_to_use flags**: QIS's primary interest is typically quality-held inventory (`ok_to_use='N'`, hold reason codes). Confirm the payload includes the hold status and reason - that is the reason QIS exists.
-- **Historical vs live**: the EDW pull today may include recent history (closed lots, shipped LPNs). Direct HJ reads by default see only live data. Confirm whether the API needs a time-window parameter.
-- **Cycle-count freeze periods**: during an active cycle count, some locations are frozen / adjusted; API must either reflect that state accurately or document the staleness window.
-- **Archived / purged data**: HJ archives old transactions; if QIS relied on data older than the HJ retention window via EDW, that data will disappear when EDW is no longer the source.
+Not applicable in the usual WMS sense - this is a data-API story, not a floor-operations or inventory-transaction story. The only warehouse-adjacent concern is generic: a new on-demand read path against HJ must not contend with transactional workloads on the same database. That concern is captured under *Integration & Interface Risk* and *QA Testability* below.
 
 🔌 Integration & Interface Risk - HIGH relevance
-- Net-new external API surface on HJ - no prior QIS-facing endpoint exists. Contract, versioning (v1 path), authn/z, rate limiting, and deprecation policy all need to be defined before code.
-- Removing (or reducing) EDW consumption of HJ tables affects any other system that reads those EDW tables today. Attach an inventory of EDW consumers before go-live so no one loses data silently.
-- Performance contract: "will not slow down any other system" (AC 3) is effectively a non-regression SLO for RF / Allocation / Shipping transactions on HJ. Realistic only if the API reads from a replica or from indexed views; a direct OLTP read path under QIS peak load is a production risk.
-- The ticket names QIS, but "Global Laboratories and other systems" are also bogged down. If only QIS switches to the API, the root-cause problem is only partially addressed; confirm whether follow-up tickets exist for the other consumers.
-- No current QIS fallback will remain once the EDW pull is decommissioned - define the failure mode explicitly.
-- No dead-letter or retry semantics documented for a transient HJ outage.
+- **QIS = Quality Information System** (Ashley's product-quality platform; see the `QC` / `PQS` projects). Existing HJ↔QIS integrations are all **Shop Audit / CTMS / CAR**-oriented data flows; relevant context:
+  - PQS-27 "PQ 2.0 - Shop Audit - Record Auto creation from Highjump" (Done) - established pattern for moving audit records out of HJ into QIS.
+  - PQS-1285 "Move CTMS Data from QTIL_QIS to EDW" (Done) - shows QIS ↔ EDW is a well-trodden path today.
+  - MISS-1611 "QIS API Integration Testing for UPH Items with CAR Report Attachment Validation" (Done) - an existing QIS-facing API pattern in Manufacturing IT worth aligning with before a new contract is invented.
+- **Net-new direct HJ→QIS API surface**: no existing endpoint is referenced in the ticket. Contract, versioning, authn/z, and rate-limiting all need to be specified.
+- **Non-regression clause (AC 3)**: "will not slow down any other system" is an explicit performance contract on a database that also serves RF, Allocation, Shipping, etc. Needs a read strategy (replica, snapshot isolation, indexed view) agreed with the HJ DBAs before design.
+- **Global Laboratories** is named in the description as currently bogged down, but the scope (AC) is QIS-only. If Global Laboratories and "other systems" also need direct-API access, confirm whether a sibling story exists - otherwise the stated root cause is only partially addressed by this ticket.
+- **EDW consumers of the HJ-sourced tables**: if any part of the HJ→EDW pull is reduced as part of this work, downstream EDW consumers must be inventoried.
 
 🧭 Slotting / Allocation-Specific
-Not applicable - outbound read-only data API for QIS consumption, no slot assignment, replenishment, or allocation logic.
+Not applicable - read-only data API for Quality Information System consumption; no slotting, replenishment, or allocation logic.
 
 🧪 QA Testability Considerations
 **Positive**
-- QIS calls the new API with a valid filter -> response matches, row-for-row, the payload from an equivalent pre-migration EDW pull for the same snapshot.
-- Concurrent QIS requests up to design-peak load -> all responses within the agreed p95 SLA.
-- Requested filters (site, item, time window) honoured; response schema matches the contract doc.
+- QIS calls the new API with a valid request - response is equivalent to the data QIS would have received from the next EDW pull for the same snapshot.
+- Multiple concurrent QIS calls at the agreed design load - all succeed within the agreed SLA.
 
 **Negative / Exception**
-- HJ DB is under peak pick-wave load -> API either responds within SLA or returns a standard 503 / Retry-After semantic; no measurable increase in RF transaction latency.
-- Invalid site / item / time filter -> 4xx with a structured error body (not 500).
-- Auth token expired / revoked -> 401 with a rotation-friendly error; token rotation does not require a deploy.
-- HJ API unavailable -> QIS follows the grooming-agreed behaviour (fail / retry / cached fallback) and does not silently return stale data.
+- HJ API is unavailable - QIS follows the grooming-agreed behaviour (fail / retry / fall back to the existing EDW pull); no silent stale reads.
+- Auth token revoked or expired - 401 with a rotation-friendly error.
 
 **Regression**
-- Other EDW consumers of the same underlying HJ tables -> unaffected, OR documented as being deprecated in the same cutover.
-- Existing QIS SQL-based pull from EDW -> runs unchanged during the dual-run window; cut-over date documented.
-- RF, Allocation, Shipping TPS under concurrent QIS design load -> no observable regression (tie to AC 3).
+- Existing QIS ↔ EDW pull runs unchanged during the dual-run window; cutover date is documented.
+- Existing EDW consumers of the HJ-sourced tables - unaffected or explicitly deprecated.
+- HJ transactional workload (RF, Allocation, Shipping, etc.) - no observable latency regression under the agreed QIS load profile (directly ties to AC 3).
 
 **RF / Automation / Batch**
-- Under simulated peak (pick wave + QIS polling at design rate), RF scan-to-response time remains within current baseline.
-- Instrumentation from day one: request count, error rate, p95 latency, per-caller quotas, with dashboards owned by the platform team.
+- Not applicable in this story's scope.
 
 ❓ Grooming Questions
-1. What is the exact dataset QIS pulls from EDW today? Attach the view / query / column list so the API response contract can be defined.
+1. What exact dataset does QIS pull from EDW today? Attach the current view / query / column list so the API response contract can be defined. (This echoes Scott Balkonis's existing comment.)
 2. What is the "near-live" SLA - target p95 response time, max payload size, max rows per call?
-3. Peak request volume and concurrency - requests per hour, simultaneous callers, typical payload size?
-4. Authentication model (API key / mTLS / OAuth) and credential-rotation owner?
-5. Does the scope include removing or changing the HJ -> EDW pull, or only the QIS -> EDW pull?
-6. Cutover plan: dual-run window length, reconciliation criteria, deprecation date for the current QIS SQL pull.
-7. On HJ API failure, what should QIS do - fail, retry, or fall back to the existing EDW pull?
-8. Are Global Laboratories and the other affected systems also switching to this API, or is this QIS-only? If QIS-only, is a follow-up ticket already scoped?
-9. Required filters on the API (site, item, time window, hold status) - confirm the query-parameter contract.
-10. Will the ticket be promoted from `Refinement` to `Estimate`, transitioned to Ready, and have DEV / UT / QA / CR1 / CR2 / UAT subtasks plus a sizing estimate attached before sprint commit?
+3. Peak request volume and concurrency expected from QIS - requests per hour, simultaneous callers?
+4. Is the scope QIS-only, or does it also cover the HJ→EDW leg (which the description cites as the source of the Global Laboratories slowdown)?
+5. Authentication model and credential-rotation owner?
+6. On HJ API failure, what should QIS do - fail, retry, or fall back to the existing EDW pull?
+7. Cutover plan: dual-run window length, deprecation date for the existing QIS pull from EDW.
+8. Can this reuse or align with an existing QIS API pattern (e.g., MISS-1611) rather than define a new contract?
+9. Will the ticket be promoted from `Refinement` to `Estimate`, transitioned to Ready, and have DEV / UT / QA / CR1 / CR2 / UAT subtasks plus a sizing estimate attached before sprint commit?
 
 ✅ Verdict: Needs Clarification (blocking)
-The intent is clear, but the data contract (what fields QIS needs), SLA (what "near-live" means), volume / concurrency, auth model, and the scope of the "double-pull" fix (QIS-only vs HJ->EDW too) are all undefined. Without these the story cannot be sized or built, and the AC 3 non-regression clause cannot be validated. Send back to the reporter for a data-contract spec and performance targets, promote from `Refinement` to `Estimate`, add subtasks, then re-groom.
+Intent is clear; the data contract (what fields QIS needs), SLA, volume, auth model, and the scope of the double-pull fix are all undefined. This matches the existing open question on the ticket ("Need detail on what data is needed"). Until the Product Quality Systems team attaches the current EDW query and the non-regression targets, the story cannot be sized or built. Promote label from `Refinement` to `Estimate` and add subtasks once the above are answered, then re-groom.
 
 ===KEY: WR-925===
 ### WR-925 - On Item import, leverage carton quantity to set parent/child on the BOM
