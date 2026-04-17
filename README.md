@@ -1,242 +1,131 @@
-# WMS Story Readiness Analyzer
+# WMS Story Readiness
 
-Automates the six-part WMS/HighJump Story Readiness framework against Jira
-stories labelled `Estimate` in the `WW` (WMS Wholesale) and `WR` (WMS Retail)
-projects.
+Automated grooming assistant for WMS user stories on Jira. Scans tickets in
+the `WW` (WMS Wholesale) and `WR` (WMS Retail) projects that carry the
+`Estimate` label, runs each one through a six-part readiness framework (Core
+intent / Edge cases / Integration risk / Slotting / QA / Formatter) using
+GitHub Models, and posts the resulting analysis back to Jira as a comment
+with an explicit verdict
+(`Ready` / `Needs Clarification (minor|moderate|blocking)`).
 
-For each issue the tool:
+Target audience: BAs, WMS architects, QA leads, and grooming facilitators at
+Ashley Furniture. Developers: see the *Developer reference* section at the
+bottom and the inline docstrings in `story_readiness/`.
 
-1. Runs the **Core Story Readiness** prompt.
-2. Conditionally runs **Edge-Case**, **Integration Risk**, and
-   **Slotting / Allocation** prompts based on keyword triage of the summary,
-   description, acceptance criteria, and labels.
-3. Runs the **QA Testability** prompt.
-4. Consolidates results through the **Output Formatter** prompt into a
-   grooming-ready summary with an explicit
-   `Ready` / `Needs Clarification (minor | moderate | blocking)` verdict.
-5. Writes a timestamped markdown report to `./output/` and, optionally, posts
-   the formatted summary back as a Jira comment.
+## At a glance
 
----
+- **Hosted on**: GitHub Actions in `aperisetla/wms-story-readiness` (will
+  move to an org-owned repo).
+- **Trigger today**: manual only via `workflow_dispatch`. A scheduled and/or
+  Jira-webhook trigger is planned.
+- **Comment authorship**: currently the user whose token drives the run. A
+  dedicated `wms-readiness-bot` service account is planned so comments
+  appear under a bot identity rather than an individual.
+- **Secrets**: `JIRA_EMAIL`, `JIRA_API_TOKEN` in GitHub Actions secrets. No
+  separate model key is needed (the workflow uses GitHub Models via the
+  built-in `GITHUB_TOKEN`).
 
-## Repository layout
+## Running it manually
 
-```
-Story Readiness/
-├── .env.example              # environment variable template
-├── .gitignore
-├── requirements.txt
-├── README.md                 # this file
-├── output/                   # generated reports (gitignored)
-└── story_readiness/
-    ├── __init__.py
-    ├── __main__.py           # CLI: `python -m story_readiness`
-    ├── config.py             # env-var loader + validation
-    ├── jira_client.py        # Jira REST client + ADF helpers
-    ├── prompts.py            # the six prompt templates
-    └── analyzer.py           # triage + LLM orchestration
-```
+1. Open the repo on GitHub and go to **Actions > Story Readiness > Run
+   workflow**.
+2. Set the inputs:
 
----
+   | Input           | Typical value       | Meaning                                             |
+   |-----------------|---------------------|-----------------------------------------------------|
+   | `projects`      | `WW,WR`             | Comma-separated project keys to scan                |
+   | `exclude`       | `WW-1310`           | Comma-separated keys to skip (pilot, hotfixes, ...) |
+   | `max_issues`    | `0`                 | Per-project cap; `0` = unlimited                    |
+   | `post_comments` | `true` / `false`    | `true` posts to Jira; `false` only uploads a report |
 
-## Prerequisites
+3. Click **Run workflow**. A run completes in 30-90 s at current volume.
+4. Download the **`readiness-reports`** artifact from the run summary to see
+   every generated comment plus a summary table.
 
-- Python **3.10 or newer**
-- Network egress to:
-  - `https://<your-site>.atlassian.net`
-  - your LLM provider (Azure OpenAI / OpenAI / Anthropic)
-- A Jira Cloud **API token** for the service account that will run the tool
-  ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens))
-- A service-account API key for the LLM provider
+Spot-check tip: set `max_issues=1` and `post_comments=false` when validating
+a prompt change - one ticket per project, no Jira writes.
 
-> ℹ️ The service account must have **Browse Projects** on `WW` and `WR` and,
-> if comment posting is enabled, **Add Comments** permission.
+## Interpreting the verdict
 
----
+Every comment ends with a single `Verdict:` line. Treat it as an entry point
+for the grooming conversation, not as an approval gate.
 
-## Local setup
+| Verdict                                | Meaning                                                                                              | Suggested action                                                                               |
+|----------------------------------------|------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| `Ready`                                | Ticket has clear intent, AC, subtasks (where expected), and no blocking integration unknowns.        | Size it, commit to a sprint.                                                                   |
+| `Needs Clarification (minor)`          | Small gaps (missing impact text, a single ambiguous bullet).                                         | Resolve inline during grooming - 5 minutes of conversation. Do not block commit.               |
+| `Needs Clarification (moderate)`       | Several gaps across AC / edge cases / subtasks; answerable in one grooming session with the author.  | Carry the questions into grooming; do not commit until answered.                               |
+| `Needs Clarification (blocking)`       | Missing a critical input (e.g., external endpoint contract, an `N` value, terminal-state semantics).| Send back to the reporter for spec work; cannot be committed to a sprint in current shape.     |
 
-### Windows (PowerShell)
+The comment above the verdict always contains a numbered **Grooming Questions**
+section - bring those verbatim into the grooming call.
 
-```powershell
-cd "C:\Users\<you>\...\Story Readiness"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-notepad .env    # populate credentials and endpoint values
-```
+## Output locations
 
-### macOS / Linux
+- **Jira comment**: one per Estimate-labeled ticket in `WW` / `WR`. Posted
+  as the user whose token drives the run (to become the service-account
+  identity once that is provisioned).
+- **GitHub Actions artifact**: `readiness-reports` on each run - a single
+  markdown file with every comment body and a verdict summary table.
+- **Hand-curated gold standard**: `analyses/prod_batch_v2_*.md` in the repo
+  is the reference example set used to calibrate the prompt; not produced
+  automatically by the workflow.
 
-```bash
-cd /path/to/Story\ Readiness
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-${EDITOR:-vi} .env
-```
+## Rotating the Jira service-account token
 
----
+Once `wms-readiness-bot` is provisioned (owned by the platform team),
+rotate its API token on a 90-day cadence or on staff change.
 
-## Configuration
+1. Sign in to Atlassian as `wms-readiness-bot` and open
+   **Account settings > Security > API tokens**.
+2. Click **Create API token**, label it `github-actions-YYYY-MM`, and copy
+   the value once (it is never shown again).
+3. In GitHub, open **Settings > Secrets and variables > Actions** on this
+   repo (or on the org, if the secret is stored at org level).
+4. Click `JIRA_API_TOKEN > Update`, paste the new value, save.
+5. **Revoke** the previous token in the Atlassian UI.
+6. Trigger a `workflow_dispatch` run with `max_issues=1` and
+   `post_comments=false` to verify the new token before the next
+   scheduled run.
 
-All configuration is read from environment variables (or a `.env` file).
-See [`.env.example`](./.env.example) for the complete list. The essentials:
+The same procedure applies to `JIRA_EMAIL` (changes only on account rename).
 
-| Variable | Purpose |
-|----------|---------|
-| `JIRA_BASE_URL` | Production: `https://ashley-furniture-team.atlassian.net` (sandbox: append `-sandbox`) |
-| `JIRA_EMAIL` | Atlassian login of the service account |
-| `JIRA_API_TOKEN` | API token from id.atlassian.com |
-| `JIRA_PROJECTS` | default `WW,WR` |
-| `JIRA_LABEL` | default `Estimate` |
-| `JIRA_AC_FIELD` | Acceptance-Criteria custom field id (default `customfield_10091`) |
-| `LLM_PROVIDER` | `azure` (default), `openai`, or `anthropic` |
-| `AZURE_OPENAI_*` | Endpoint, key, deployment, api-version (when provider is `azure`) |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | When provider is `openai` |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | When provider is `anthropic` |
-| `OUTPUT_DIR` | Report output directory (default `./output`) |
-| `MAX_ISSUES` | Cap issues per run (0 = unlimited) |
-| `EXCLUDE_KEYS` | Comma-separated keys to skip (e.g. `WW-1310`) |
-| `POST_COMMENTS` | `0` (default) = markdown only; `1` = also post to Jira |
+## Current limitations
 
----
+- **No idempotency check yet**: repeated runs with `post_comments=true` can
+  produce duplicate comments. Workaround: add already-handled tickets to
+  the `exclude` input until the marker-based idempotency check lands.
+- **No auto-trigger yet**: the workflow runs only on manual dispatch.
+  See the *Operational backlog* section.
+- **Prompt defects surface in output**: the model is instructed to flag
+  spec defects (malformed JSON, typos, conflicting statements) in the
+  ticket it is reviewing, but it cannot catch every case. Treat the
+  comment as a first draft, not a final review.
 
-## Usage
+## Operational backlog
 
-```powershell
-# Default: dry-run (no Jira comments), markdown report to ./output/
-python -m story_readiness
+Tracked separately; listed here so the team knows what is next.
 
-# Restrict to a single project and skip already-in-flight tickets
-python -m story_readiness --projects WW --exclude WW-1310
+- Move the repo to an Ashley Furniture GitHub org.
+- Provision `wms-readiness-bot` Jira user and migrate the token.
+- Add a bot-signature marker + idempotency check to the posting step.
+- Add a scheduled trigger (every 30 min) and, if Atlassian admin approves,
+  a Jira Automation webhook for real-time runs on label-add.
+- Slack / Teams summary of each run.
 
-# Small pilot run, then inspect the report before going live
-python -m story_readiness --max-issues 3 --verbose
+## Developer reference
 
-# Post results back to Jira as comments (explicit opt-in)
-python -m story_readiness --post-comments
-```
+- Source layout: see `story_readiness/` (entry point: `python -m
+  story_readiness`).
+- Prompt: `story_readiness/prompts.py` (`UNIFIED_READINESS` is the
+  production template; older per-section templates are preserved behind
+  the `--legacy-multi-call` flag).
+- Output validation: `validate_unified_output()` checks that every
+  required emoji section is present and that the verdict line matches
+  the allowed enum. Currently advisory (logs a warning) - make it strict
+  once the prompt is stable.
+- Scripts: `scripts/post_prod_analyses.py`, `scripts/update_prod_comments.py`,
+  `scripts/delete_run_comments.py` (ad-hoc comment maintenance; not wired
+  into the scheduled pipeline).
+- Contact / escalation: WMS Architecture team (internal).
 
-Report files are written to `<OUTPUT_DIR>/story-readiness-YYYYMMDD-HHMMSS.md`
-and the path is printed to stdout for easy shell chaining.
-
-### Safety defaults
-
-- `--dry-run` (no comment posting) is the default unless either
-  `POST_COMMENTS=1` is set **and** `--dry-run` is not passed, **or**
-  `--post-comments` is explicitly supplied.
-- Issues listed in `EXCLUDE_KEYS` / `--exclude` are skipped before any LLM
-  calls are made.
-- Each LLM call uses `temperature=0.2` for deterministic output.
-
----
-
-## Deployment to a shared terminal server
-
-Goal: make the tool runnable by any member of the architecture team from a
-single Windows terminal server without redistributing credentials.
-
-### 1. One-time install (admin)
-
-```powershell
-# Pick a shared, readable location, e.g. D:\tools
-cd D:\tools
-git clone <your-internal-mirror>/story-readiness.git "Story Readiness"
-cd "Story Readiness"
-
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-deactivate
-```
-
-### 2. Shared service credentials
-
-Create a dedicated Jira service account (e.g. `svc-story-readiness`) and an
-Azure OpenAI key scoped to one deployment. Store them in a **machine-scoped**
-`.env` file readable only by the architecture-team security group:
-
-```powershell
-# As an administrator
-Copy-Item .\.env.example .\.env
-notepad .env          # populate with service-account credentials
-icacls .\.env /inheritance:r
-icacls .\.env /grant "DOMAIN\ArchitectureTeam:(R)" /grant "SYSTEM:(F)" /grant "Administrators:(F)"
-```
-
-> Never commit `.env`. It is already listed in `.gitignore`.
-
-### 3. Team launcher script
-
-Place a thin wrapper on a shared `PATH` location (e.g. `D:\tools\bin`):
-
-```powershell
-# D:\tools\bin\story-readiness.ps1
-& "D:\tools\Story Readiness\.venv\Scripts\python.exe" -m story_readiness @args
-```
-
-Team members then run:
-
-```powershell
-story-readiness                        # dry run, markdown only
-story-readiness --projects WW          # one project
-story-readiness --post-comments        # promote to Jira comments
-```
-
-### 4. Scheduled run (optional)
-
-Use Task Scheduler to run a nightly dry-run and publish the report to a
-shared drive:
-
-```powershell
-schtasks /Create /SC DAILY /TN "WMS Story Readiness" /ST 06:30 `
-  /TR "powershell -ExecutionPolicy Bypass -File D:\tools\bin\story-readiness.ps1 --output-dir \\fs01\wms\story-readiness"
-```
-
-### 5. Audit & observability
-
-- Reports include a triage line per story so reviewers can see which deep-dive
-  prompts fired.
-- Standard logging goes to stdout (INFO by default, `--verbose` for DEBUG).
-- If `POST_COMMENTS=1`, every posted comment includes the Augment Code
-  attribution footer so Jira history makes the automation obvious.
-
----
-
-## Framework reference
-
-The prompts applied by the tool are defined verbatim in
-[`story_readiness/prompts.py`](./story_readiness/prompts.py):
-
-| Prompt | When it runs |
-|--------|--------------|
-| `CORE_READINESS` | Always |
-| `EDGE_CASES` | When summary/description mentions inventory, pick/pack/putaway, lot/serial, hold, transfer, return, exception, cycle count, wave, LPN, scanner, override |
-| `INTEGRATION_RISK` | When text mentions STORIS, ERP, TMS, OMS, ProShip, carrier, EDI, API, interface, AS400, HighJump, automation, RF/scanner, ASN, printer, queue |
-| `SLOTTING_ALLOCATION` | When text mentions slotting, replenishment, allocation, forward pick, casegood, dynamic slot |
-| `QA_TESTABILITY` | Always |
-| `FORMATTER` | Always — consolidates all of the above |
-
-Triage rules live in `analyzer.py` (`EDGE_CASE_TRIGGERS`,
-`INTEGRATION_TRIGGERS`, `SLOTTING_TRIGGERS`) and can be tuned without touching
-the prompt text.
-
----
-
-## Troubleshooting
-
-- **`401 Unauthorized` from Jira** — confirm `JIRA_EMAIL` matches the account
-  that created `JIRA_API_TOKEN`, and that the token hasn't expired.
-- **`404` for some issues** — the service account lacks Browse Project
-  permission on those projects; grant access or narrow `JIRA_PROJECTS`.
-- **`Azure OpenAI configuration incomplete`** — populate all four
-  `AZURE_OPENAI_*` variables or switch `LLM_PROVIDER` to `openai`.
-- **Empty Acceptance Criteria in reports** — the AC field id differs between
-  projects; set `JIRA_AC_FIELD` to the correct `customfield_#####` for the
-  project you are analyzing.
-- **Slow runs** — lower `MAX_ISSUES` or switch to a cheaper model
-  (`OPENAI_MODEL=gpt-4o-mini`).
