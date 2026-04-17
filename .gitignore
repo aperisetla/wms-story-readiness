@@ -19,9 +19,11 @@ output/
 reports/
 *.log
 
-# Transient debug dumps (ad-hoc Jira pulls)
-prod_issues.json
-prod_issues_extracted.txt
+# Transient debug dumps (ad-hoc Jira pulls and CI artifact downloads)
+prod_issues*.json
+prod_*_extracted.txt
+reports_artifact*
+
 
 # IDE
 .vscode/
