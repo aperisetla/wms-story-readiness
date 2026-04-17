@@ -201,10 +201,24 @@ Story Details:
 Structural Readiness Flags:
 {{readiness_flags}}
 
-Output this exact skeleton (keep the emoji and heading text verbatim):
+Output this exact skeleton (keep the emoji and heading text verbatim).
+The `<...>` tokens below are SUBSTITUTION SLOTS - replace each with real
+values drawn from Story Details. NEVER emit the angle-bracket placeholder
+text literally, and NEVER emit the word "meta line".
 
-### <KEY> - <one-line summary>
-<meta line: Project | Type | Priority | Labels | Parent | Status>
+A filled-in example of the first three lines (for reference only - do not
+copy the literal content, only the shape):
+
+    ### WW-1608 - Raw Material RI process - API Interface configuration
+    Project: WMS | Type: Story | Priority: Medium | Labels: Estimate | Parent: WW-1502 | Status: Ready
+
+    **Description (as written):** Configure t_api_config ... (1-3 sentences)
+    **Acceptance Criteria (as written):** RI 608 transaction matching ...
+
+Now produce the real output for the current story using this skeleton:
+
+### <ISSUE-KEY> - <one-line summary of the ticket>
+Project: <project> | Type: <issuetype> | Priority: <priority> | Labels: <comma-sep labels> | Parent: <parent key and short title, or "(none)"> | Status: <status>
 
 **Description (as written):** <1-3 sentences summarising the ticket body>
 **Acceptance Criteria (as written):** <verbatim AC or "(none in customfield_10091)">
