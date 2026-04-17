@@ -114,6 +114,27 @@ class JiraClient:
         resp.raise_for_status()
         log.info("Posted comment to %s", key)
 
+    def list_comments(self, key: str, order_by: str = "-created") -> List[Dict[str, Any]]:
+        url = f"{self.cfg.base_url}/rest/api/3/issue/{key}/comment"
+        resp = requests.get(
+            url,
+            params={"orderBy": order_by, "maxResults": 100},
+            auth=self.auth,
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json().get("comments", []) or []
+
+    def update_comment(self, key: str, comment_id: str, markdown_body: str) -> None:
+        url = f"{self.cfg.base_url}/rest/api/3/issue/{key}/comment/{comment_id}"
+        body = {"body": _markdown_to_adf(markdown_body)}
+        resp = requests.put(
+            url, json=body, auth=self.auth, headers=self.headers, timeout=self.timeout
+        )
+        resp.raise_for_status()
+        log.info("Updated comment %s on %s", comment_id, key)
+
 
 # ---------- ADF helpers -----------------------------------------------------
 def adf_to_text(value: Any) -> str:

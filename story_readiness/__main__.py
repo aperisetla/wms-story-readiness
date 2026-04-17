@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from .analyzer import LLMClient, analyze_issue
+from .analyzer import LLMClient, analyze_issue, analyze_issue_unified
 from .config import AppConfig, load_config
 from .jira_client import JiraClient, JiraIssue
 
@@ -28,6 +28,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--output-dir", default=None, help="Override output directory")
     p.add_argument("--post-comments", action="store_true", help="Post analysis back to Jira (overrides env)")
     p.add_argument("--dry-run", action="store_true", help="Never post to Jira even if env says so")
+    p.add_argument(
+        "--legacy-multi-call",
+        action="store_true",
+        help="Use the legacy 6-call prompt flow instead of the unified single-call flow.",
+    )
     p.add_argument("--verbose", action="store_true", help="Debug logging")
     return p.parse_args(argv)
 
@@ -86,12 +91,15 @@ def _format_summary_table(rows: List[Dict[str, str]]) -> str:
 
 
 def _extract_verdict(formatted: str) -> str:
+    """Return the verdict string from the unified or legacy formatter output."""
     for line in formatted.splitlines():
-        low = line.lower()
-        if "ready" in low and "needs clarification" not in low and line.strip().startswith(("-", "*", "Ready", "**")):
-            return line.strip(" -*#").strip()
-        if "needs clarification" in low:
-            return line.strip(" -*#").strip()
+        stripped = line.strip().lstrip("-*#").strip()
+        low = stripped.lower()
+        if "verdict" in low and ":" in stripped:
+            # e.g. "✅ Verdict: Needs Clarification (moderate)"
+            return stripped.split(":", 1)[1].strip().split("\n", 1)[0]
+        if low.startswith("ready") or low.startswith("needs clarification"):
+            return stripped
     return "(verdict not parsed)"
 
 
@@ -128,7 +136,10 @@ def main(argv: List[str] | None = None) -> int:
             break
         log.info("Analyzing %s — %s", issue.key, issue.summary)
         try:
-            analysis = analyze_issue(llm, issue)
+            if args.legacy_multi_call:
+                analysis = analyze_issue(llm, issue)
+            else:
+                analysis = analyze_issue_unified(llm, issue)
         except Exception as exc:  # pragma: no cover
             log.exception("Analysis failed for %s: %s", issue.key, exc)
             continue

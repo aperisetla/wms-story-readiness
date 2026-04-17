@@ -206,3 +206,47 @@ def analyze_issue(llm: LLMClient, issue: JiraIssue) -> Dict[str, str]:
     results["_triage"] = ", ".join(k for k, v in decisions.items() if v) or "(none)"
     results["_flags"] = flags.to_markdown()
     return results
+
+
+
+def analyze_issue_unified(llm: LLMClient, issue: JiraIssue) -> Dict[str, str]:
+    """Single-call analysis that produces the gold-standard grooming comment.
+
+    Returns a dict with keys:
+      * ``Formatted`` - the full markdown comment body ready to post.
+      * ``_triage`` / ``_flags`` - retained for the summary table.
+      * ``_validation`` - any validator warnings (empty string when clean).
+    """
+    story_details = _render_story_details(issue)
+    flags = compute_readiness_flags(issue)
+    decisions = triage(issue)
+    log.info("%s triage: %s", issue.key, {k: v for k, v in decisions.items() if v})
+
+    prompt_text = (
+        prompts.UNIFIED_READINESS
+        .replace("{{story_details}}", story_details)
+        .replace("{{readiness_flags}}", flags.to_markdown())
+    )
+    body = llm.complete(prompts.SYSTEM_PROMPT, prompt_text)
+
+    problems = prompts.validate_unified_output(body)
+    if problems:
+        log.warning("%s: unified output failed validation: %s", issue.key, problems)
+        fix_prompt = (
+            "Your previous response did not conform to the required skeleton. "
+            "Problems:\n- " + "\n- ".join(problems) + "\n\n"
+            "Re-emit the full comment, fixing ONLY the listed problems. "
+            "Keep every other bullet verbatim.\n\n"
+            "Previous response:\n" + body
+        )
+        body = llm.complete(prompts.SYSTEM_PROMPT, fix_prompt)
+        problems = prompts.validate_unified_output(body)
+        if problems:
+            log.error("%s: unified output still invalid after retry: %s", issue.key, problems)
+
+    return {
+        "Formatted": body,
+        "_triage": ", ".join(k for k, v in decisions.items() if v) or "(none)",
+        "_flags": flags.to_markdown(),
+        "_validation": "; ".join(problems),
+    }
