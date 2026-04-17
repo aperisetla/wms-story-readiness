@@ -1,0 +1,87 @@
+name: Story Readiness Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      projects:
+        description: "Comma-separated Jira project keys"
+        default: "WW,WR"
+        required: true
+      exclude:
+        description: "Comma-separated issue keys to skip"
+        default: "WW-1310"
+        required: false
+      max_issues:
+        description: "Cap issues per run (0 = unlimited)"
+        default: "0"
+        required: false
+      post_comments:
+        description: "Post grooming summary back to Jira as a comment"
+        type: boolean
+        default: false
+  schedule:
+    # Daily at 01:00 UTC (06:30 IST) — adjust as needed
+    - cron: "0 1 * * 1-5"
+
+permissions:
+  contents: write   # allow committing reports to the repo
+  models: read      # grant GITHUB_TOKEN access to GitHub Models inference
+
+concurrency:
+  group: story-readiness
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Story Readiness analyzer
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || 'https://ashley-furniture-team-sandbox.atlassian.net' }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECTS: ${{ github.event.inputs.projects || 'WW,WR' }}
+          JIRA_LABEL: Estimate
+          JIRA_AC_FIELD: customfield_10091
+          EXCLUDE_KEYS: ${{ github.event.inputs.exclude || 'WW-1310' }}
+          MAX_ISSUES: ${{ github.event.inputs.max_issues || '0' }}
+          LLM_PROVIDER: github_models
+          GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_MODELS_MODEL: openai/gpt-4o-mini
+          OUTPUT_DIR: ./reports
+        run: |
+          python -m story_readiness $([ "${{ github.event.inputs.post_comments }}" = "true" ] && echo "--post-comments" || echo "")
+
+      - name: Upload report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: story-readiness-report
+          path: reports/*.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit reports to main (scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name "story-readiness-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add reports/
+          if git diff --staged --quiet; then
+            echo "No report changes to commit."
+          else
+            git commit -m "chore: nightly story readiness report [skip ci]"
+            git push
+          fi
