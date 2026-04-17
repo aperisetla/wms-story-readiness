@@ -87,7 +87,7 @@ See [`.env.example`](./.env.example) for the complete list. The essentials:
 
 | Variable | Purpose |
 |----------|---------|
-| `JIRA_BASE_URL` | e.g. `https://ashley-furniture-team-sandbox.atlassian.net` |
+| `JIRA_BASE_URL` | Production: `https://ashley-furniture-team.atlassian.net` (sandbox: append `-sandbox`) |
 | `JIRA_EMAIL` | Atlassian login of the service account |
 | `JIRA_API_TOKEN` | API token from id.atlassian.com |
 | `JIRA_PROJECTS` | default `WW,WR` |
