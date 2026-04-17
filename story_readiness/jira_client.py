@@ -135,6 +135,12 @@ class JiraClient:
         resp.raise_for_status()
         log.info("Updated comment %s on %s", comment_id, key)
 
+    def delete_comment(self, key: str, comment_id: str) -> None:
+        url = f"{self.cfg.base_url}/rest/api/3/issue/{key}/comment/{comment_id}"
+        resp = requests.delete(url, auth=self.auth, headers=self.headers, timeout=self.timeout)
+        resp.raise_for_status()
+        log.info("Deleted comment %s on %s", comment_id, key)
+
 
 # ---------- ADF helpers -----------------------------------------------------
 def adf_to_text(value: Any) -> str:

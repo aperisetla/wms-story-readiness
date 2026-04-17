@@ -347,150 +347,153 @@ Not applicable - pure transaction-reprocessing / messaging layer.
 High-priority, frequent failure with solid root cause, but cannot be committed until N, terminal-state semantics, legacy-job decommission target, and ServiceNow configuration are decided. AC also needs to move into `customfield_10091` and subtasks must be added.
 
 ===KEY: WR-1164===
-### WR-1164 - WR Direct Ship/Transfer - API for QIS and Highjump for Retail
-Project: WMS Retail · Type: Story · Priority: Medium · Labels: Estimate · Parent: WR-799 (WR Direct Ship/Transfer from RDC) · Status: Backlog
+### WR-1164 - API for QIS and HJ
+Project: WMS Retail | Type: Story | Priority: Medium | Labels: APR, Refinement | Parent: WR-907 (Small / Medium Demand 2026 Q2) | Status: Backlog
 
-**Description (as written):** Establish a WhJ -> QIS API pair so that Retail direct-ship / transfer flows out of an RDC can (1) trigger inspection tickets in QIS on arrival at the RDC and (2) receive inspection results back into WhJ (with the item moved to an in-transit location) before onward transfer. Existing interfaces: `receivingSheet` and `receivingSheetClose`; per the description these do not currently exist for QIS and need to be modified.
-**Acceptance Criteria (as written):** Outbound to QIS: includes tracking, item, PO, location, ingestion date, pack slips; must support single or multi items. Inbound from QIS: inspection details received, item moves to an in-transit location, defects flagged at item level, ticket closed to hand off back to WhJ. Existing `receivingSheet` and `receivingSheetClose` must be modified to support this flow.
+**Description (as written):** Numerous systems are having slowness and performance issues because of the process of having EDW pull from HJ every 15 minutes, then QIS pull from EDW every 15 minutes. Global Laboratories and other systems are being bogged down by the double pull. Build an API that the QIS system can call on demand to pull near-live data directly from HJ.
+**Acceptance Criteria (as written):** The new API call from HJ to QIS will be on demand (not a recurring job running every 15 minutes). The data retrieved from the API call will be the same data currently retrieved by the QIS pull from EDW. The API will not slow down any other system.
 
 🟡 Missing or Unclear Details
-- Scope verb collision: the ticket text says the interfaces "do not currently exist" and then says "receivingSheet / receivingSheetClose must be modified". Clarify - is this *new* interface work, or an *extension* of an existing one?
-- Pack slip payload shape: "pack slips" is listed but not specified - is it a PDF attachment, a structured JSON line list, or a reference to an external document store?
-- Multi-item bundling: "single or multi items" - one outbound call per item, or one call per shipment with a line array? Batch semantics drive idempotency.
-- Defect model on inbound: "defects flagged at item level" - what are the allowed defect codes? Is there an existing enum on WhJ, or does QIS own the taxonomy?
-- In-transit location: where is the destination bin configured - per facility, per item, or globally on a `t_config` row?
-- Ticket closure semantics: does QIS close its own ticket and emit the closure event, or does WhJ close it on receipt of the inbound? Race risk if both sides close independently.
-- Transport layer: HTTPS REST, Azure Service Bus topic, or the same EDI/JSON pipeline as WW-1608? Unstated.
-- Auth: API key, OAuth client credentials, or mTLS? Credential storage / rotation?
-- Retry / idempotency: if QIS is unreachable on outbound, does WhJ queue and retry (like WW-179), or drop?
-- No subtasks on the ticket. Add DEV / UT / QA / CR1 / CR2 / UAT at minimum.
-- Priority is Medium, Status is Backlog - confirm this is not blocking the WR-799 parent epic.
+- **Data contract is undefined**: AC says "same data as the current QIS pull from EDW" but the EDW view / query / column list driving that pull is not attached. Without that catalogue (table/view names, columns, filters, joins) DEV cannot define the API response shape.
+- **"Near-live" SLA is not a number**: confirm the response-time target (e.g., p95 < 2 s, max payload size, max rows) so the HJ query path and any required indexes can be validated against live transactional load.
+- **Request volume and concurrency**: "on demand" has no bound - peak requests / hour, max concurrent QIS callers, expected payload size per call. Drives both HJ DB capacity and QIS-side batching.
+- **Authentication and authorisation**: API key, mTLS, OAuth client-credentials, or HJ service account? Who owns the credential and rotation procedure? Not mentioned in AC.
+- **Scope on the HJ side**: which HJ tables does the existing EDW pull read? (Candidates: `t_inventory`, `t_stored_item`, `t_item`, `t_location`, quality-hold tables.) Confirmation needed so the API does not have to read the whole schema.
+- **Scope of "QIS"**: all QIS workflows, or only the specific screens / jobs that are currently slow? Affects whether this is a single endpoint or several.
+- **What about the EDW -> HJ pull?** The "double pull" framing names two hops (HJ->EDW every 15 min, EDW->QIS every 15 min). AC only covers the QIS side. Is the HJ->EDW pull also being removed / changed, or does EDW still pull for other consumers? If the HJ->EDW pull stays, the root cause ("Global Laboratories bogged down") is only half-fixed.
+- **Cutover / dual-run plan**: timeline for deprecating the existing QIS-pulls-from-EDW path, how long both paths run in parallel, reconciliation of results during that window.
+- **Fallback on API outage**: today QIS implicitly has EDW as a fallback; if that path is removed, what does QIS do on HJ API failure - fail the user action, queue a retry, fall back to a cached dataset?
+- **Observability expectations**: request rate, error rate, p95 response time, per-caller quotas - none are specified as AC, but needed for the "will not slow down any other system" clause to be testable.
+- **Label / workflow state**: current labels are `APR`, `Refinement`; ticket is not yet in `Estimate`, and status is Backlog (not Ready). Expect promotion to `Estimate` and a Ready transition before sprint commit; current backlog automation keyed on `Estimate` will skip this ticket as-is.
+- **No subtasks visible** (DEV / UT / QA / CR1 / CR2 / UAT) and no story-point estimate.
 
 🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
-- Partial receipt at RDC: 8 of 10 items arrive - does the outbound fire now with 8, or wait for the balance? Depends on whether QIS tickets are per-shipment or per-item.
-- Mixed-pack LPN: a single LPN carrying multiple SKUs across multiple orders - outbound payload needs a clear primary key to avoid QIS de-dupe collisions.
-- Defective vs damaged-in-transit: QIS may flag defective on arrival, but some defects are carrier-induced. Does the defect code distinguish, and does the downstream flow differ?
-- Hold / quarantine location: if QIS returns "failed inspection", should WhJ place the item in a quarantine slot distinct from in-transit, or the same?
-- Re-inspection after repair: an item failed, was reworked, and needs re-inspection. Does this re-trigger the outbound, and does the previous QIS ticket reopen or does a new one get created?
-- Cross-border transfer: if the shipment moves between tax jurisdictions, does the inspection hand-off carry the jurisdiction metadata?
-- High-volume RDC: at 500+ inbound shipments per day, the outbound throughput must be tested to confirm QIS can accept the load.
+- **Read contention during active pick / putaway waves**: QIS on-demand reads against `t_inventory` / `t_stored_item` / `t_location` at the same time RF is updating those tables can block transactional work. Use a read-committed-snapshot or replica strategy; the API should never hold page locks on hot tables.
+- **Mid-transaction reads**: a receipt or move may span several row updates; QIS may see a partially-applied state. Document the isolation guarantee (e.g., snapshot vs read-uncommitted) and whether QIS can tolerate it.
+- **Multi-site queries**: QIS today likely pulls for all sites from EDW. Does the new API accept a site filter? If not, response size per call can be large and affects SLA.
+- **Quality holds / ok_to_use flags**: QIS's primary interest is typically quality-held inventory (`ok_to_use='N'`, hold reason codes). Confirm the payload includes the hold status and reason - that is the reason QIS exists.
+- **Historical vs live**: the EDW pull today may include recent history (closed lots, shipped LPNs). Direct HJ reads by default see only live data. Confirm whether the API needs a time-window parameter.
+- **Cycle-count freeze periods**: during an active cycle count, some locations are frozen / adjusted; API must either reflect that state accurately or document the staleness window.
+- **Archived / purged data**: HJ archives old transactions; if QIS relied on data older than the HJ retention window via EDW, that data will disappear when EDW is no longer the source.
 
 🔌 Integration & Interface Risk - HIGH relevance
-- New WhJ <-> QIS bidirectional API layer: schema design, auth, transport, and versioning all need explicit decisions before DEV.
-- Modification of the existing `receivingSheet` / `receivingSheetClose` interfaces is risky: confirm no non-QIS consumer relies on the current shape.
-- Downstream STORIS visibility: when the item moves to in-transit after inspection, STORIS needs to reflect the new status. Is that covered by an existing WhJ -> STORIS message, or is that a follow-up?
-- Retry + dead-letter: must align with the retry pattern proposed in WW-179 so WR does not reinvent the framework.
-- Audit / traceability: each outbound and inbound must be logged with a correlationId tying the QIS ticket to the WhJ receiving record.
-- Observability: the ticket needs a dashboard-style requirement, not just "it works".
+- Net-new external API surface on HJ - no prior QIS-facing endpoint exists. Contract, versioning (v1 path), authn/z, rate limiting, and deprecation policy all need to be defined before code.
+- Removing (or reducing) EDW consumption of HJ tables affects any other system that reads those EDW tables today. Attach an inventory of EDW consumers before go-live so no one loses data silently.
+- Performance contract: "will not slow down any other system" (AC 3) is effectively a non-regression SLO for RF / Allocation / Shipping transactions on HJ. Realistic only if the API reads from a replica or from indexed views; a direct OLTP read path under QIS peak load is a production risk.
+- The ticket names QIS, but "Global Laboratories and other systems" are also bogged down. If only QIS switches to the API, the root-cause problem is only partially addressed; confirm whether follow-up tickets exist for the other consumers.
+- No current QIS fallback will remain once the EDW pull is decommissioned - define the failure mode explicitly.
+- No dead-letter or retry semantics documented for a transient HJ outage.
 
 🧭 Slotting / Allocation-Specific
-Partial relevance. The in-transit location for post-inspection items is a slotting decision: one shared in-transit bin per facility, or a pool by item type? Confirm during grooming so the bin topology is agreed before DEV.
+Not applicable - outbound read-only data API for QIS consumption, no slot assignment, replenishment, or allocation logic.
 
 🧪 QA Testability Considerations
 **Positive**
-- Inbound shipment at RDC -> outbound to QIS with all mandatory fields (tracking, item, PO, location, ingestion date, pack slip reference); QIS accepts and creates a ticket.
-- QIS returns inspection results with no defects -> WhJ moves the items to the in-transit location and closes the local ticket.
-- Multi-item shipment -> single outbound call carries all items; QIS returns one consolidated inspection result per line.
+- QIS calls the new API with a valid filter -> response matches, row-for-row, the payload from an equivalent pre-migration EDW pull for the same snapshot.
+- Concurrent QIS requests up to design-peak load -> all responses within the agreed p95 SLA.
+- Requested filters (site, item, time window) honoured; response schema matches the contract doc.
 
 **Negative / Exception**
-- QIS unreachable on outbound -> message queued and retried per the agreed retry framework; no lost shipment.
-- QIS returns "inspection failed" with defect codes -> items flagged at item level; does NOT advance to in-transit.
-- Malformed QIS inbound (missing ticket id) -> inbound rejected with a clear error, nothing mutated in WhJ.
-- Duplicate QIS inbound (same correlationId) -> idempotent; second message is a no-op.
-- Partial receipt scenario -> behaves per the decision made in grooming.
+- HJ DB is under peak pick-wave load -> API either responds within SLA or returns a standard 503 / Retry-After semantic; no measurable increase in RF transaction latency.
+- Invalid site / item / time filter -> 4xx with a structured error body (not 500).
+- Auth token expired / revoked -> 401 with a rotation-friendly error; token rotation does not require a deploy.
+- HJ API unavailable -> QIS follows the grooming-agreed behaviour (fail / retry / cached fallback) and does not silently return stale data.
 
 **Regression**
-- Legacy `receivingSheet` / `receivingSheetClose` consumers (non-Retail, non-QIS) -> unchanged behaviour.
-- Non-RDC receiving flows -> unchanged.
-- STORIS visibility of receipts -> unchanged unless explicitly in scope.
+- Other EDW consumers of the same underlying HJ tables -> unaffected, OR documented as being deprecated in the same cutover.
+- Existing QIS SQL-based pull from EDW -> runs unchanged during the dual-run window; cut-over date documented.
+- RF, Allocation, Shipping TPS under concurrent QIS design load -> no observable regression (tie to AC 3).
 
 **RF / Automation / Batch**
-- RF receipt at RDC triggers outbound automatically - no manual step for the operator.
-- Scheduled retry job picks up queued outbounds within the agreed SLA.
+- Under simulated peak (pick wave + QIS polling at design rate), RF scan-to-response time remains within current baseline.
+- Instrumentation from day one: request count, error rate, p95 latency, per-caller quotas, with dashboards owned by the platform team.
 
 ❓ Grooming Questions
-1. Is this new interface work or an extension of the existing `receivingSheet` - what is the actual diff target?
-2. Outbound transport: REST, Service Bus, or EDI? Same stack as WW-1608?
-3. What is the defect taxonomy, and who owns it?
-4. How is the in-transit location configured, and is there a separate quarantine location for failed inspections?
-5. Retry / idempotency / dead-letter - align with the WW-179 pattern?
-6. Does STORIS need an update when the item moves to in-transit, or is that a follow-up?
-7. Who is the QIS side owner, and has a contract test been agreed?
-8. Can we get subtasks added and a sizing estimate on the story?
-
-✅ Verdict: Needs Clarification (moderate)
-AC is directionally clear but the story mixes "new" and "modify" language, leaves transport / auth / defect taxonomy / retry pattern open, and has no subtasks. These gaps must close before DEV picks it up.
-
-===KEY: WR-925===
-### WR-925 - BOM parent/child item on import
-Project: WMS Retail · Type: Story · Priority: Medium · Labels: Estimate · Parent: WR-734 (BOM in WhJ) · Status: Ready
-
-**Description (as written):** Ensure Bill-of-Materials (BOM) parent/child item relationships are correctly created and maintained in WhJ when items are imported, so that inventory, receiving, picking, and shipping behave correctly for kit / BOM items in the Retail flow.
-**Acceptance Criteria (as written):** `(none in customfield_10091)` - no structured AC is attached; description is a one-line summary.
-
-🟡 Missing or Unclear Details
-- Description is effectively one line. Before sizing, the ticket needs:
-  - Source of the import: which upstream system sends the parent/child records (SKU master, ERP, external file drop)?
-  - Import mechanism: nightly SSIS job, real-time API, manual CSV upload in WebWise?
-  - Target tables in WhJ: is BOM stored in `t_item_bom` (or equivalent), and what is the parent/child column model?
-  - Conflict rules: what happens when the import sends a relationship that already exists with a different quantity or child set?
-- Status is "Ready" but there is no `customfield_10091` content and no visible subtasks. Cannot be Ready without an AC.
-- Sibling parent WR-734 ("BOM in WhJ") is the umbrella epic - confirm which sibling stories cover BOM receipt, BOM pick, and BOM ship so WR-925 scope is properly fenced.
-- Definition of "correctly": is the import expected to *create* new BOM rows, *update* existing ones, or *reconcile* (delete + recreate)?
-- Kit lifecycle: does a parent auto-explode into children on receipt, or only on pick? Depends on the BOM semantics already agreed in the parent epic.
-- Cancellation / deletion: if the upstream system deletes a BOM, does the import delete it in WhJ, or flag inactive?
-- Audit: is there an import log capturing which rows were added, updated, or skipped?
-- No story-point estimate is attached.
-
-🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
-- Recursive BOMs: parent A has child B which itself is a BOM (nested kit) - is recursion supported, and to what depth?
-- Partial kits: a parent with 5 children where only 3 arrive - does the import still establish the relationship, and how does receiving handle it?
-- Quantity multiplier: child qty per parent - e.g., a chair kit uses 4 identical legs - verify the import carries the multiplier and that it flows to pick/ship.
-- Unit-of-measure mismatch: parent in EA, child in PAIR - conversion rules?
-- Item not yet in WhJ: the import references a child SKU that has not been created in `t_item` yet - hold, skip, or fail?
-- Effective dating: a BOM change scheduled for next week - does the import support date-effective versions, or is it always "active now"?
-- Retail flows vs WMS flows: Retail may have different BOM semantics than wholesale (e.g., customer-visible vs internal). Confirm the scope is Retail-only.
-- Concurrency: if two imports run back-to-back with different versions of the same BOM, which wins?
-
-🔌 Integration & Interface Risk - MEDIUM relevance
-- Upstream source system (unspecified) must be confirmed; changing the import spec may require coordination with that owner.
-- Downstream consumers of BOM in WhJ (picking, receiving, shipping) must handle the imported relationships correctly. Verify which flows already consume the BOM tables today.
-- If the import is a replacement of an existing legacy job, confirm the decommission path and dual-run window.
-- Observability: an import run summary (rows read, rows written, rows skipped, errors) is mandatory for any production rollout.
-
-🧭 Slotting / Allocation-Specific
-Indirect relevance. Kit / BOM items may drive specific slotting decisions (e.g., place children adjacent to the parent to reduce pick travel). Not in scope of this ticket, but flag for the parent epic if not already covered.
-
-🧪 QA Testability Considerations
-**Positive**
-- Import a brand-new parent with 3 children -> WhJ creates the parent item, 3 child items (if not yet present), and the BOM relationship rows.
-- Import an existing BOM with no changes -> import is idempotent; no duplicate rows created.
-- Import an existing BOM with a changed child quantity -> WhJ reflects the updated quantity.
-
-**Negative / Exception**
-- Child SKU not present in WhJ -> import behaviour per the decision in grooming (hold vs skip vs fail).
-- Circular BOM (parent A references B which references A) -> import rejects with a clear error.
-- UoM mismatch between parent and child -> import rejects or applies the documented conversion rule.
-- Delete/inactivate flow -> upstream sends a "remove" marker, WhJ marks the relationship inactive (not hard-delete, unless decided otherwise).
-
-**Regression**
-- Non-BOM item imports -> unchanged.
-- Existing BOM rows not touched by the current import run -> untouched.
-- Picking / receiving / shipping flows on non-BOM items -> unchanged.
-
-**RF / Automation / Batch**
-- Scheduled import runs on its existing cadence, emits a run summary, alerts on repeated failures.
-- Spot-check: a freshly imported BOM is pickable on an RF flow immediately, without a WhJ restart.
-
-❓ Grooming Questions
-1. What is the source and transport of the import (SSIS / API / file drop)?
-2. Which table(s) store BOM in WhJ today, and what is the parent/child column shape?
-3. Insert-only, update-in-place, or reconcile-with-delete? Must be explicit in the AC.
-4. How are missing child SKUs handled - hold, skip, or fail the row?
-5. Are nested BOMs supported, and to what depth?
-6. Is there a date-effective version model, or is "active now" the only state?
-7. Can we get an AC drafted in `customfield_10091` and subtasks added before sprint commit?
-8. Should a run summary / import log table be included in the DoD?
+1. What is the exact dataset QIS pulls from EDW today? Attach the view / query / column list so the API response contract can be defined.
+2. What is the "near-live" SLA - target p95 response time, max payload size, max rows per call?
+3. Peak request volume and concurrency - requests per hour, simultaneous callers, typical payload size?
+4. Authentication model (API key / mTLS / OAuth) and credential-rotation owner?
+5. Does the scope include removing or changing the HJ -> EDW pull, or only the QIS -> EDW pull?
+6. Cutover plan: dual-run window length, reconciliation criteria, deprecation date for the current QIS SQL pull.
+7. On HJ API failure, what should QIS do - fail, retry, or fall back to the existing EDW pull?
+8. Are Global Laboratories and the other affected systems also switching to this API, or is this QIS-only? If QIS-only, is a follow-up ticket already scoped?
+9. Required filters on the API (site, item, time window, hold status) - confirm the query-parameter contract.
+10. Will the ticket be promoted from `Refinement` to `Estimate`, transitioned to Ready, and have DEV / UT / QA / CR1 / CR2 / UAT subtasks plus a sizing estimate attached before sprint commit?
 
 ✅ Verdict: Needs Clarification (blocking)
-Status is "Ready" but the ticket is effectively a single-sentence description with no structured AC, no subtasks, and no source-system definition. It cannot enter a sprint until an AC and scope boundary are written.
+The intent is clear, but the data contract (what fields QIS needs), SLA (what "near-live" means), volume / concurrency, auth model, and the scope of the "double-pull" fix (QIS-only vs HJ->EDW too) are all undefined. Without these the story cannot be sized or built, and the AC 3 non-regression clause cannot be validated. Send back to the reporter for a data-contract spec and performance targets, promote from `Refinement` to `Estimate`, add subtasks, then re-groom.
+
+===KEY: WR-925===
+### WR-925 - On Item import, leverage carton quantity to set parent/child on the BOM
+Project: WMS Retail | Type: Story | Priority: Medium | Labels: Estimate | Parent: WR-907 (Small / Medium Demand 2026 Q2) | Status: Ready
+
+**Description (as written):** Leverage the **carton_qty** field on the inbound STORIS item feed to drive creation of BOM master / detail records in WhJ. When a carton is received, the parent item should be resolved to its child item via a BOM lookup that is backed by a fresh AS400 call (mirroring the pattern already used by wholesale WMS).
+**Acceptance Criteria (as written):** (1) Create a mechanism similar to wholesale WMS to call an integration with AS400 to get BOM information. (2) Call a new AS400 endpoint to get the data for the site, and store it in WMS.
+
+🟡 Missing or Unclear Details
+- **AS400 endpoint contract** is not attached: name of the program / service, input parameters (site, item, effective date?), return shape, auth, and SLA. Without this, DEV cannot start.
+- **Wholesale WMS reference pattern**: the AC says "similar to wholesale WMS" but the actual wholesale stored-procedure or integration package name is not cited. Attach the reference (e.g., `usp_bom_get_from_as400` or equivalent) so Retail reuses and does not re-invent.
+- **Target WhJ tables**: BOM master / detail column model on the Retail side - reuse the wholesale `t_item_bom` / `t_item_bom_detail` (or their Retail equivalents), or a new Retail-specific table?
+- **carton_qty semantics**: is `carton_qty = 1` a non-BOM item (no explode), `carton_qty > 1` a BOM parent with `carton_qty` identical children, or does it drive a different child SKU via an AS400 lookup? The one-line description implies both. Clarify.
+- **Trigger point**: "during the receipt of the item" - is the AS400 call made on item **import** (STORIS item feed load), on physical **receipt** (RF), or both? AC 2 says "store it in WMS" which implies the call happens at import, not at every receipt.
+- **Caching / refresh**: if the AS400 BOM changes after the initial store, how is WhJ kept in sync - full refresh per import, delta pull on demand, or event-driven?
+- **AS400 unavailability at import time**: does the STORIS item feed hold, skip, or fail the row? This needs a documented behaviour.
+- **Versioning**: BOM definitions can be effective-dated in ERP. Does the Retail side honour effective dates, or always take "current"?
+- **No subtasks visible** despite the story being in "Ready" status; add DEV / UT / QA / CR1 / CR2 / UAT before sprint.
+- **Parent correction**: actual parent is WR-907, not WR-734.
+
+🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
+- **carton_qty = 0 or negative** on the feed: reject the item, or treat as non-BOM?
+- **Parent-child SKU mismatch**: AS400 returns a child SKU that is not in `t_item` on the Retail side yet; hold the import, auto-create a stub item, or fail?
+- **Multi-site BOMs**: AC 2 specifies "for the site" - does a single item have different BOMs per site (plausible for furniture variants), and how is the site key passed on the AS400 call?
+- **Recursive kits**: a child is itself a BOM parent; is the AS400 call recursive, or flat one-level?
+- **UoM conversion**: carton_qty is in cartons, child quantity might be in EA; confirm the multiplier rule.
+- **Late-arriving feed**: the STORIS item feed runs nightly - what if a carton arrives physically before the item is on the WhJ side? Receiving must have a graceful fallback.
+- **Reconciliation**: if AS400 later changes the BOM, does the Retail side need a one-time resync job for items already imported?
+- **Concurrent imports**: two STORIS feeds on the same item back-to-back; last-write-wins or row-level lock on the AS400 call?
+
+🔌 Integration & Interface Risk - HIGH relevance
+- New AS400 endpoint: transport (RPG program over DRDA, webservice, MQ?), auth, error model all undocumented. This is the biggest risk in the story.
+- STORIS item feed path must be extended to trigger the AS400 call on each new / changed item - confirm the feed job owner has capacity for this change in the same release.
+- Reusing the wholesale pattern reduces risk, but any divergence (naming, column types, error handling) can reintroduce bugs fixed long ago in wholesale.
+- Observability: a log table for AS400 calls (request, response, latency, success / error) is mandatory for a new external dependency.
+- Network path from the WhJ Retail environment to AS400 - confirmed, ACL'd, monitored? Retail may not share the same AS400 egress as wholesale.
+- Rollback: a feature flag to disable the AS400 call and fall back to the prior behaviour (no BOM explode / default `carton_qty = 1` semantics).
+
+🧭 Slotting / Allocation-Specific
+Indirect. Resolved BOM children may occupy distinct slots from their parents, and pick travel is sensitive to that placement. Not in scope of WR-925 directly, but flag to the parent epic if not already covered.
+
+🧪 QA Testability Considerations
+**Positive**
+- STORIS item feed arrives with `carton_qty > 1` -> AS400 endpoint called -> BOM master / detail rows created in WhJ -> receipt of the parent expands to children in inventory.
+- Feed arrives with `carton_qty = 1` (non-BOM item) -> no AS400 call (or a call that returns "no BOM"), item imported unchanged.
+- Re-import of the same item with an unchanged AS400 response -> idempotent, no duplicate BOM rows.
+
+**Negative / Exception**
+- AS400 endpoint unavailable -> behaviour per the documented policy (hold / skip / fail), alert raised.
+- AS400 returns a child SKU not yet in `t_item` -> behaviour per the documented policy.
+- AS400 returns a malformed payload -> row rejected, import log row captures the raw response.
+- carton_qty = 0 / negative -> rejected with a clear reason.
+- Two concurrent AS400 calls for the same item -> no duplicate BOM rows, no partial writes.
+
+**Regression**
+- Non-Retail BOM flows (wholesale) -> unaffected.
+- STORIS item feed for non-BOM items -> timing and behaviour unchanged.
+- Existing Retail items whose BOM was set manually before this story -> not overwritten unless an explicit resync is in scope.
+
+**RF / Automation / Batch**
+- Receipt scan of a parent with a newly imported BOM -> RF flow expands children correctly on first scan after import.
+- Post-deploy monitor: AS400-call success rate per hour, avg latency, error codes.
+
+❓ Grooming Questions
+1. Can we get the AS400 endpoint specification (name, params, return, auth, SLA) attached to the ticket?
+2. What is the wholesale reference integration (SP or package name) we are mirroring?
+3. Is the AS400 call made on item import only, on every receipt, or both?
+4. What happens on AS400 unavailability - hold, skip, or fail the item row?
+5. Does Retail need a periodic resync job for BOMs that change on the AS400 side post-import?
+6. Is the target WhJ storage the existing wholesale BOM tables, or Retail-specific ones?
+7. Are subtasks (DEV / UT / QA / CR1 / CR2 / UAT) and a sizing estimate being added before sprint commit?
+8. Should the parent link be corrected from WR-734 to WR-907 on the ticket?
+
+✅ Verdict: Needs Clarification (blocking)
+AC is a two-line directive against an undefined AS400 endpoint. Story is labelled "Ready" but cannot be committed without the endpoint contract, the wholesale reference pattern, the trigger-point decision, and the AS400-unavailable policy.
