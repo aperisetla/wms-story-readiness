@@ -93,7 +93,6 @@ Project: WMS · Type: Story · Priority: Medium · Labels: Estimate · Parent: W
 - Idempotency on user retry: after reversal, is the same `work_q_id` reused or is a new row created? Not specified.
 - Timezone on the validation query (`CAST(wkq.date_due AS DATE) >= CAST(GETDATE() AS DATE)`) uses server-local GETDATE(); if the WhJ server time zone differs from the facility's, late-shift picks may drop off the filter.
 - Description has several empty headings (`Solution Implemented`, `Proposed Solution`, `Deployment Artifacts`, `Processes Impacted`) - populate before DEV pickup.
-- No story-point value visible.
 
 🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
 - Deadlock injected mid-SP: both PKD and work_q must either commit together or roll back together - validate under the isolation level actually used by WhJ.
@@ -137,7 +136,6 @@ Not applicable - defect operates below location slotting. If replan re-routes a 
 3. Should the needlist active-page query be changed in the same release, or is that a follow-up UI ticket?
 4. Is there a billable-reporting impact window (i.e., does Finance need to reconcile prior months after the fix)?
 5. What is the current isolation level of `usp_assign_dynamic_pick`, and should it change?
-6. Can we get a story-point estimate attached before planning?
 
 ✅ Verdict: Needs Clarification (moderate)
 Root cause is well-identified and subtask coverage is strong, but error-handler scope, needlist-query impact, and the historical-cleanup decision must be nailed down before DEV commits.
@@ -207,76 +205,75 @@ Not applicable directly. Stuck cycle counts compound inventory inaccuracy over t
 Small, well-scoped change with a clear AC. Only partial-count behaviour, reset semantics, and the exact work_type predicate need explicit answers; move the AC into `customfield_10091` and add subtasks before sprint commit.
 
 ===KEY: WW-524===
-### WW-524 - Hotload ship error - PKD messed up (PRB0040975)
-Project: WMS · Type: Story · Priority: Medium · Labels: Estimate · Parent: WW-959 (PRBs 2026 Q2) · Status: Backlog · Links: *relates to* WW-292 (Done, RESEARCH)
+### WW-524 - Hotload ship error - PKD messed up SN PRB0040975 - Development
+Project: WMS · Type: Story · Priority: Medium · Labels: Review · Parent: WW-959 (PRBs 2026 Q2) · Status: Backlog · Links: *relates to* WW-292 (Done, Bug - RESEARCH)
 
-**Description (as written):** `t_pick_detail` (PKD) quantities drift out of sync with `t_stored_item` (STO) and `t_serial_active` (SNA) when Hotload ship operations run against picks that are still mid-process with a staging user. The drift causes failed allocations, incorrect pick tasks, and manual corrections by support. Sibling ticket WW-292 (Done) holds the research / recreation steps.
-**Acceptance Criteria (as written):** (1) Only assign picks for loading that are not still assigned to the staging user. (2) Loading split can only split PKD records where `user_assigned IS NULL`. (3) Use the recreation steps from the attached research document to test before and after fix.
+**Description (as written):** There is a quantity inconsistency between the `t_pick_detail` (PKD) table and the inventory tables `t_stored_item` (STO) and `t_serial_active` (SNA). While STO and SNA hold the correct inventory and serial-level quantities, PKD contains incorrect or outdated quantity values. This discrepancy results in data-integrity issues during hotload, leading to incorrect pick tasks, failed allocations, and manual corrections by support. The system must ensure PKD quantities always stay aligned with STO and SNA values.
+**Acceptance Criteria (as written):** Only assign picks for loading that are not still assigned to the staging user.
 
 🟡 Missing or Unclear Details
-- "Staging user" is defined by convention, not by column: is it `pkd.staging_user_id`, a role flag on `t_user`, or a join to the staging work-queue table? Must be explicit in the SP diff.
-- Hotload trigger is undefined - time-based (ship window < N minutes), flag-based (`order.hotload = 1`), or manual override?
-- Historical drift repair: PKD rows already out of sync with STO / SNA may still exist. Is a one-time cleanup / reconciliation query in scope, or only prevention?
-- Partial staging + partial loading split: PKD qty 100, staging locks 40, loading wants to split 60. AC 2 blocks the whole split on non-null `user_assigned`. Is that intended, or should the 60 split off while staging keeps the 40?
-- No subtasks. Add DEV / UT / QA / CR1 / CR2 / UAT.
-- Research provenance: the ticket links to WW-292 via `relates to`. Update the description to name WW-292 as the research phase so it is visible without hovering the link.
-- Monitor query: AC 3 refers to recreation steps, but there is no standing drift-detection query to leave in place post-fix. Consider adding one to the AC.
-- Frequency and business impact are not captured on the ticket.
+- **AC / description mismatch**: the description frames the problem as PKD-qty drift vs STO / SNA; the AC proposes a loading-assignment filter (skip picks still held by the staging user). The causal link between "staging user still holds the pick" and "PKD qty drift" is not explained on the ticket.
+- **"Staging user" is undefined in the description and undefined by column**: no schema pointer (`pkd.staging_user_id`? a role on `t_user`? a join to `t_work_q` with a staging work-type?). The only AC hinges on this term.
+- **Hotload trigger is undefined**: time-based (ship window < N minutes), flag-based (`order.hotload = 1`), or manual override? Description says "during hotload" but never names the trigger.
+- **Single-line AC for a production drift bug**: either the AC is incomplete or there is a narrower scoping decision (loading assign only, not split / replan / RF pick-complete) that should be stated on the ticket.
+- **Historical drift repair**: PKD rows already out of sync with STO / SNA may still exist. One-time reconciliation in scope, or only prevention?
+- **Monitor query**: no standing drift-detection query is part of AC. A simple PKD vs STO vs SNA join would give ops a post-fix monitor.
+- **Research provenance**: WW-292 (Done, Bug, RESEARCH) is linked `relates to` - the description should explicitly name WW-292 as the research phase so grooming sees it without hovering the link.
+- **No subtasks**. Add DEV / UT / QA / CR1 / CR2 / UAT.
+- **Frequency and business impact** are not captured on the ticket despite PRB0040975 implying a known production problem.
 
 🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
-- Race window: staging user releases (`user_assigned <- NULL`) in the same millisecond that loading tries to assign. Isolation level of the assign SP matters - READ COMMITTED can read stale `user_assigned`.
-- Hotload bypass of staging: if a shipment qualifies as hotload and staging is skipped entirely, does AC 1 still apply, or is that a different code path?
-- Serialized vs bulk picks: SNA only exists for serial-tracked items; PKD drift on non-serial items is detectable only via STO. Confirm both cases are exercised in QA.
-- Replan, RF pick-complete, bulk-move: these SPs can also desync PKD vs STO / SNA. AC only addresses loading assign + loading split - is that the full scope?
-- Staging user absent / terminated: `user_assigned` references a user no longer in `t_user`. Does the blocker still apply, or should it unblock?
-- Multi-line orders with partial staging completion: some lines staged, others not - loading assigns by line, not by order - confirm behaviour.
+- Race window: staging user releases the pick in the same transaction that loading tries to assign. Isolation level of the assign SP matters - READ COMMITTED can read stale values.
+- Hotload bypass of staging: if a shipment qualifies as hotload and staging is skipped entirely, does the AC filter still apply, or is that a different code path?
+- Serialised vs bulk picks: SNA only exists for serial-tracked items; PKD drift on non-serial items is detectable only via STO. Both paths must be exercised in QA.
+- Replan / RF pick-complete / bulk-move: these SPs can also desync PKD vs STO / SNA. AC addresses only loading assign - is narrow scoping intentional?
+- Staging user absent / terminated: the pick is held by a user who no longer exists in `t_user`. Does the filter block loading indefinitely, or unblock with an orphan fallback?
+- Multi-line orders with partial staging completion: some lines staged, others not - loading assigns by line or by order? Confirm behaviour.
 
 🔌 Integration & Interface Risk - LOW relevance
-- All changes are internal to WhJ SQL (`t_pick_detail`, `t_stored_item`, `t_serial_active`, and the loading assign / split SPs).
+- All changes are internal to WhJ SQL (`t_pick_detail`, `t_stored_item`, `t_serial_active`, and the loading assign SP).
 - No external system involved.
 - Downstream consumers (ship manifests, billing, carrier BOLs) depend on accurate PKD; verify no regression in manifest generation.
 
 🧭 Slotting / Allocation-Specific
-Not applicable directly. PKD-STO drift can cascade into incorrect replen or slot decisions downstream, but that impact is out of scope for this story.
+Not applicable directly. PKD-STO drift can cascade into incorrect replen / slot decisions downstream, but that impact is out of scope for this story.
 
 🧪 QA Testability Considerations
 **Positive**
-- PKD with `user_assigned IS NULL` -> loading assignment proceeds; no PKD qty mutation against STO / SNA.
-- Loading split on a PKD with `user_assigned IS NULL` -> split succeeds; post-split PKD + STO + SNA remain aligned.
-- Reproduce WW-292 recreation steps (pre-fix) -> bug exhibits as captured.
-- Reproduce the same steps (post-fix) -> no drift observed.
+- Loading assign against a pick released by the staging user -> succeeds; PKD, STO, SNA aligned post-ship.
+- Reproduce the WW-292 research scenario pre-fix -> drift reproduces.
+- Reproduce post-fix -> no drift observed.
 
 **Negative / Exception**
-- PKD with `user_assigned` = staging user and a Hotload attempts to assign -> blocked or deferred; no PKD qty mutation, no orphan row.
-- Loading split where `user_assigned` = staging user -> split blocked.
-- Concurrent staging-release + loading-assign race -> eventual consistency; no double-assign.
-- Order with cancelled lines + partially staged lines -> behaviour per decision in grooming.
+- Loading assign against a pick still held by the staging user -> blocked (or deferred) per AC; no PKD qty mutation.
+- Concurrent staging-release + loading-assign race -> one wins atomically; no double-assign, no orphan row.
+- Order with a mix of staged and unstaged lines -> behaviour per the decision taken in grooming.
 
 **Regression**
 - Non-hotload ship flows -> unchanged.
-- Non-staging loading assign (pure loading work) -> unchanged.
+- Pure loading work (no prior staging) -> unchanged.
 - Replan / RF pick-complete / bulk-move paths -> unchanged by this story.
 
 **RF / Automation / Batch**
-- Post-run monitor query: `SELECT ... FROM t_pick_detail p JOIN t_stored_item s ON ... WHERE p.qty <> s.qty` returns zero rows on shared keys after a hotload day.
-- Daily shift-end report confirms zero drift across the facility.
+- Post-ship monitor query (PKD qty JOIN STO qty / SNA qty on shared keys) returns zero rows post-fix.
+- Daily drift report confirms zero occurrences across the facility for one week post-deploy.
 
 ❓ Grooming Questions
-1. Which column identifies the staging user, and is it nullable today?
-2. What triggers "Hotload" semantically - a flag, a time window, or an operator action?
-3. Is a one-time historical cleanup in scope, or only prevention going forward?
-4. On AC 2, should partial splits be allowed (split only the un-locked qty) or blocked outright?
-5. Should the fix also harden replan / RF pick-complete paths, or is WW-524 narrowly the loading assign and split SPs?
-6. Can we embed a standing drift-detection query into the AC so operations has a monitor post-fix?
-7. Can we get WW-292 (research) officially cross-linked as the provenance for this story?
+1. **How is "staging user" expressed in the schema today** - a column on PKD, a role on `t_user`, or a join to `t_work_q` with a staging work-type?
+2. Which loading SP(s) are in scope - the loading assign only, or also split / replan / RF pick-complete?
+3. What triggers "hotload" semantically - a flag, a time window, or an operator action?
+4. Is a one-time historical drift cleanup in scope, or only prevention going forward?
+5. The description describes PKD-vs-STO/SNA drift, but AC proposes a loading-assign filter - can we get the causal link documented on the ticket?
+6. Can we embed a standing drift-detection query into the AC so operations has a post-fix monitor?
+7. Can subtasks (DEV / UT / QA / CR1 / CR2 / UAT) and a sizing estimate be added before sprint commit?
 
-✅ Verdict: Needs Clarification (moderate)
-Research is done and AC targets the right SPs, but staging-user column semantics, historical-drift handling, and subtask / sizing setup are missing.
+✅ Verdict: Needs Clarification (blocking)
+AC is a single directive built on an undefined term ("staging user"), and the causal link between that directive and the PKD-drift symptom described is not on the ticket. Cannot be committed until the term is grounded in a schema column and the scope of the fix (loading assign only vs also split / replan) is confirmed.
 
 
 ===KEY: WW-179===
 ### WW-179 - EDILostHJTransactions - Lost HJ transactions from HJ to AS400
-Project: WMS · Type: Bug · Priority: High · Labels: Estimate · Parent: WW-959 (PRBs 2026 Q2) · Status: To Do · Frequency: ~5 / week
+Project: WMS · Type: Bug · Priority: High · Labels: Refinement · Parent: WW-959 (PRBs 2026 Q2) · Status: To Do · Frequency: ~5 / week
 
 **Description (as written):** EDI transactions from HighJump (WhJ) to AS400 are being stranded in `t_export_tran.status = 'E'` when the AS400 connection drops mid-write. Manual remediation today is to set `status = 'N'` so the record re-queues. The ticket asks for: (1) automatic retry N times at 10-minute intervals; (2) after N failures, raise a ServiceNow incident; (3) disable the legacy automated SN-ticket creation job that runs from the EDI process.
 **Acceptance Criteria (as written):** `(none in customfield_10091)` - requirements are in the description body.
@@ -412,75 +409,76 @@ Intent is clear; the data contract (what fields QIS needs), SLA, volume, auth mo
 
 ===KEY: WR-925===
 ### WR-925 - On Item import, leverage carton quantity to set parent/child on the BOM
-Project: WMS Retail | Type: Story | Priority: Medium | Labels: Estimate | Parent: WR-907 (Small / Medium Demand 2026 Q2) | Status: Ready
+Project: WMS Retail · Type: Story · Priority: Medium · Labels: APR, Refinement · Parent: WR-907 (Small / Medium Demand 2026 Q2) · Status: Backlog
 
-**Description (as written):** Leverage the **carton_qty** field on the inbound STORIS item feed to drive creation of BOM master / detail records in WhJ. When a carton is received, the parent item should be resolved to its child item via a BOM lookup that is backed by a fresh AS400 call (mirroring the pattern already used by wholesale WMS).
-**Acceptance Criteria (as written):** (1) Create a mechanism similar to wholesale WMS to call an integration with AS400 to get BOM information. (2) Call a new AS400 endpoint to get the data for the site, and store it in WMS.
+**Description (as written):** Leverage carton quantity from the STORIS item feed to create BOM master and BOM detail. Parent item should be updated to child item during the receipt of the item.
+**Acceptance Criteria (as written):** Unkits on the import to child item import should put on the BOM Kits table.
 
 🟡 Missing or Unclear Details
-- **AS400 endpoint contract** is not attached: name of the program / service, input parameters (site, item, effective date?), return shape, auth, and SLA. Without this, DEV cannot start.
-- **Wholesale WMS reference pattern**: the AC says "similar to wholesale WMS" but the actual wholesale stored-procedure or integration package name is not cited. Attach the reference (e.g., `usp_bom_get_from_as400` or equivalent) so Retail reuses and does not re-invent.
-- **Target WhJ tables**: BOM master / detail column model on the Retail side - reuse the wholesale `t_item_bom` / `t_item_bom_detail` (or their Retail equivalents), or a new Retail-specific table?
-- **carton_qty semantics**: is `carton_qty = 1` a non-BOM item (no explode), `carton_qty > 1` a BOM parent with `carton_qty` identical children, or does it drive a different child SKU via an AS400 lookup? The one-line description implies both. Clarify.
-- **Trigger point**: "during the receipt of the item" - is the AS400 call made on item **import** (STORIS item feed load), on physical **receipt** (RF), or both? AC 2 says "store it in WMS" which implies the call happens at import, not at every receipt.
-- **Caching / refresh**: if the AS400 BOM changes after the initial store, how is WhJ kept in sync - full refresh per import, delta pull on demand, or event-driven?
-- **AS400 unavailability at import time**: does the STORIS item feed hold, skip, or fail the row? This needs a documented behaviour.
-- **Versioning**: BOM definitions can be effective-dated in ERP. Does the Retail side honour effective dates, or always take "current"?
-- **No subtasks visible** despite the story being in "Ready" status; add DEV / UT / QA / CR1 / CR2 / UAT before sprint.
-- **Parent correction**: actual parent is WR-907, not WR-734.
+- **Target table name**: AC names a "BOM Kits table" but does not cite the physical table (or whether this is a single table or the master + detail pair implied by the description). No DDL and no reference to an existing WR retail table.
+- **Feed field**: the STORIS item feed's carton-quantity column name and data type are not on the ticket. Without that, DEV cannot wire the mapping.
+- **Parent / child linkage direction**: AC talks about "child item import" as a distinct feed record; description talks about carton_qty on the parent. Is a child-item record a separate feed row (then the join key is…?), or is the child SKU derivable from the parent row alone?
+- **"Parent item should be updated to child item during the receipt" is ambiguous**: does this mean the parent inventory row is converted / unkitted into N child rows at receipt (unkit explode), or that the parent item master mutates to a child SKU? The first is normal kit behaviour; the second would be a data-integrity risk. Must be spelled out.
+- **Trigger point**: BOM Kits row creation appears to happen **at import** (AC: "on the import … should put on the BOM Kits table"), and the unkit explode happens **at receipt** (description). Confirm the two-phase model and which SP / job owns each phase.
+- **carton_qty policy**: what is the behaviour for `carton_qty` = null, 0, 1, or negative? Presumably non-kit, but it must be stated so downstream consumers do not need to guess.
+- **Effective dating / change handling**: if a later STORIS feed changes carton_qty on an existing kit, does the BOM Kits row update, and does it retroactively affect receipts already processed?
+- **Recursive kits**: can a child itself be a kit parent? Unknown - flat one-level is the safe default but must be declared.
+- **Reverse logistics**: on un-receipt or return, do children re-kit back into a parent row, or remain as children?
+- **Serial / lot-tracked children**: if the parent carton is serial-tracked, how is the serial record propagated across the N children?
+- **No subtasks** and status is Backlog - labels `APR, Refinement` indicate pre-sprint triage, not Ready. DEV / UT / QA / CR1 / CR2 / UAT subtasks and a sizing estimate are required before sprint commit.
 
 🏭 Warehouse-Specific Edge Cases (Edge-Case Focus)
-- **carton_qty = 0 or negative** on the feed: reject the item, or treat as non-BOM?
-- **Parent-child SKU mismatch**: AS400 returns a child SKU that is not in `t_item` on the Retail side yet; hold the import, auto-create a stub item, or fail?
-- **Multi-site BOMs**: AC 2 specifies "for the site" - does a single item have different BOMs per site (plausible for furniture variants), and how is the site key passed on the AS400 call?
-- **Recursive kits**: a child is itself a BOM parent; is the AS400 call recursive, or flat one-level?
-- **UoM conversion**: carton_qty is in cartons, child quantity might be in EA; confirm the multiplier rule.
-- **Late-arriving feed**: the STORIS item feed runs nightly - what if a carton arrives physically before the item is on the WhJ side? Receiving must have a graceful fallback.
-- **Reconciliation**: if AS400 later changes the BOM, does the Retail side need a one-time resync job for items already imported?
-- **Concurrent imports**: two STORIS feeds on the same item back-to-back; last-write-wins or row-level lock on the AS400 call?
+- carton_qty = 0, null, or negative on the feed: reject the row, import as non-kit, or log and continue?
+- Child SKU not yet present in the item master at import time (feed ordering) - hold, auto-create a stub, or fail the row?
+- Recursive / multi-level kits - flat one-level or full explode at receipt? Not declared.
+- UoM mismatch - parent is stocked in cartons, child in EA - confirm the multiplier rule and where the conversion factor lives.
+- Mid-life change to carton_qty on an already-imported kit - does the BOM Kits row update, and what happens to prior receipts?
+- Reverse logistics: un-receipt of a kit parent - do children re-kit back into a parent, or remain as independent child rows?
+- Concurrent imports: two STORIS feeds on the same item back-to-back - last-write-wins or row-level lock on the BOM Kits write?
+- Physical carton arrives before the STORIS feed loads the item - receiving fallback (hold, receive-as-parent-only, alert).
 
-🔌 Integration & Interface Risk - HIGH relevance
-- New AS400 endpoint: transport (RPG program over DRDA, webservice, MQ?), auth, error model all undocumented. This is the biggest risk in the story.
-- STORIS item feed path must be extended to trigger the AS400 call on each new / changed item - confirm the feed job owner has capacity for this change in the same release.
-- Reusing the wholesale pattern reduces risk, but any divergence (naming, column types, error handling) can reintroduce bugs fixed long ago in wholesale.
-- Observability: a log table for AS400 calls (request, response, latency, success / error) is mandatory for a new external dependency.
-- Network path from the WhJ Retail environment to AS400 - confirmed, ACL'd, monitored? Retail may not share the same AS400 egress as wholesale.
-- Rollback: a feature flag to disable the AS400 call and fall back to the prior behaviour (no BOM explode / default `carton_qty = 1` semantics).
+🔌 Integration & Interface Risk - MEDIUM relevance
+- STORIS -> WR item-feed load is the only integration touched. The carton-quantity column must exist and be mapped to the BOM Kits write.
+- No external system (AS400 or otherwise) is called out on the ticket; this is a WR-internal transformation of an existing feed into existing / new WMS tables.
+- Downstream consumers of the BOM Kits table (pick generation, replen, cycle count, inventory reports, retail order allocation) each need regression coverage - a kit parent that explodes at receipt changes `t_stored_item` row counts and can skew existing queries.
+- Observability: a log row per kit explode (import-time row into BOM Kits and receipt-time child write) is needed so support can diagnose "why does parent X not show in inventory" quickly.
+- Rollback: a feature flag that reverts to the prior behaviour (store parent as-is, no BOM Kits write, no receipt-time explode) in case the unkit explode misbehaves.
 
 🧭 Slotting / Allocation-Specific
-Indirect. Resolved BOM children may occupy distinct slots from their parents, and pick travel is sensitive to that placement. Not in scope of WR-925 directly, but flag to the parent epic if not already covered.
+Indirect. Once a kit parent unkits into children at receipt, child SKUs may slot in different locations from the parent carton - pick travel is sensitive to that placement. Out of scope for WR-925 directly, but flag to WR-907 if not already planned.
 
 🧪 QA Testability Considerations
 **Positive**
-- STORIS item feed arrives with `carton_qty > 1` -> AS400 endpoint called -> BOM master / detail rows created in WhJ -> receipt of the parent expands to children in inventory.
-- Feed arrives with `carton_qty = 1` (non-BOM item) -> no AS400 call (or a call that returns "no BOM"), item imported unchanged.
-- Re-import of the same item with an unchanged AS400 response -> idempotent, no duplicate BOM rows.
+- STORIS feed row with `carton_qty > 1` -> BOM Kits row created at import with parent and child linkage.
+- Parent carton received at the dock -> inventory explodes into N child rows; parent row closed / zeroed; child qty = `carton_qty` (or per the rule confirmed in grooming).
+- Re-import of the same item with an unchanged carton_qty -> idempotent; no duplicate BOM Kits row.
 
 **Negative / Exception**
-- AS400 endpoint unavailable -> behaviour per the documented policy (hold / skip / fail), alert raised.
-- AS400 returns a child SKU not yet in `t_item` -> behaviour per the documented policy.
-- AS400 returns a malformed payload -> row rejected, import log row captures the raw response.
-- carton_qty = 0 / negative -> rejected with a clear reason.
-- Two concurrent AS400 calls for the same item -> no duplicate BOM rows, no partial writes.
+- carton_qty = 0 / null / negative -> per the grooming decision (reject vs treat-as-non-kit); import log row captures the decision.
+- Child SKU missing from item master at import time -> per the grooming decision (hold / stub / fail).
+- Malformed feed row -> rejected; raw payload logged.
+- Concurrent feed loads on the same item -> no duplicate BOM Kits rows, no partial writes.
 
 **Regression**
-- Non-Retail BOM flows (wholesale) -> unaffected.
-- STORIS item feed for non-BOM items -> timing and behaviour unchanged.
-- Existing Retail items whose BOM was set manually before this story -> not overwritten unless an explicit resync is in scope.
+- Non-kit items on the STORIS feed -> timing and behaviour unchanged.
+- Existing WR retail items whose BOM was set manually before this story -> not overwritten unless an explicit resync is in scope.
+- Wholesale BOM tables / flows -> unaffected (this is a WR-only story).
 
 **RF / Automation / Batch**
-- Receipt scan of a parent with a newly imported BOM -> RF flow expands children correctly on first scan after import.
-- Post-deploy monitor: AS400-call success rate per hour, avg latency, error codes.
+- Receipt scan of a kit parent -> operator sees the expected prompts (parent ID accepted) and inventory reflects children after the scan completes.
+- Post-deploy monitor: per-day count of BOM Kits rows created, receipts that triggered an explode, and any failures with reason codes.
 
 ❓ Grooming Questions
-1. Can we get the AS400 endpoint specification (name, params, return, auth, SLA) attached to the ticket?
-2. What is the wholesale reference integration (SP or package name) we are mirroring?
-3. Is the AS400 call made on item import only, on every receipt, or both?
-4. What happens on AS400 unavailability - hold, skip, or fail the item row?
-5. Does Retail need a periodic resync job for BOMs that change on the AS400 side post-import?
-6. Is the target WhJ storage the existing wholesale BOM tables, or Retail-specific ones?
-7. Are subtasks (DEV / UT / QA / CR1 / CR2 / UAT) and a sizing estimate being added before sprint commit?
-8. Should the parent link be corrected from WR-734 to WR-907 on the ticket?
+1. What is the physical name of the "BOM Kits table", and is it a single table or a master / detail pair?
+2. Which STORIS item feed column carries the carton quantity, and what are its data type and nullability?
+3. Does the STORIS feed carry a distinct child-item record, or is the child SKU derivable from the parent row alone?
+4. Is the unkit explode done at physical receipt (per the description), and is the BOM Kits write done at import (per the AC)? Confirm the two-phase model.
+5. "Parent item should be updated to child item during the receipt" - is this an inventory-row unkit explode, or an item-master mutation? (The latter would be a data-integrity risk.)
+6. Policy for `carton_qty` = 0, null, or negative on the feed?
+7. Policy when the child SKU referenced by a parent is not yet present in the item master at import time?
+8. Handling for a later feed change to carton_qty on an already-received kit (retroactive vs forward-only)?
+9. Are recursive kits (child is itself a kit) in scope, or flat one-level only?
+10. Subtasks (DEV / UT / QA / CR1 / CR2 / UAT) and a sizing estimate before sprint commit? Status is Backlog and labels are `APR, Refinement`.
 
 ✅ Verdict: Needs Clarification (blocking)
-AC is a two-line directive against an undefined AS400 endpoint. Story is labelled "Ready" but cannot be committed without the endpoint contract, the wholesale reference pattern, the trigger-point decision, and the AS400-unavailable policy.
+Description is two sentences and AC is one line. The target table, the feed field, the direction of the parent-to-child update, the two-phase model (import vs receipt), and the carton_qty edge-case policy are all undefined. Cannot be committed until the data contract and unkit semantics are captured on the ticket.
