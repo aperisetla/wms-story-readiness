@@ -24,6 +24,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--projects", default=None, help="Comma-separated project keys, overrides env")
     p.add_argument("--label", default=None, help="Jira label to filter on, overrides env")
     p.add_argument("--exclude", default=None, help="Comma-separated issue keys to skip")
+    p.add_argument(
+        "--include-keys",
+        default=None,
+        help="Comma-separated Jira keys to analyze (bypasses the label filter)",
+    )
     p.add_argument("--max-issues", type=int, default=None, help="Cap issues per run")
     p.add_argument("--output-dir", default=None, help="Override output directory")
     p.add_argument("--post-comments", action="store_true", help="Post analysis back to Jira (overrides env)")
@@ -44,6 +49,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.jira.label = args.label
     if args.exclude:
         cfg.runtime.exclude_keys = [x.strip() for x in args.exclude.split(",") if x.strip()]
+    if args.include_keys:
+        cfg.runtime.include_keys = [x.strip() for x in args.include_keys.split(",") if x.strip()]
     if args.max_issues is not None:
         cfg.runtime.max_issues = args.max_issues
     if args.output_dir:
@@ -121,12 +128,18 @@ def main(argv: List[str] | None = None) -> int:
     detail_blocks: List[str] = []
     processed = 0
 
-    log.info(
-        "Scanning projects=%s label=%s post_comments=%s",
-        cfg.jira.projects, cfg.jira.label, cfg.runtime.post_comments,
-    )
+    if cfg.runtime.include_keys:
+        log.info(
+            "Targeting explicit keys=%s post_comments=%s",
+            cfg.runtime.include_keys, cfg.runtime.post_comments,
+        )
+    else:
+        log.info(
+            "Scanning projects=%s label=%s post_comments=%s",
+            cfg.jira.projects, cfg.jira.label, cfg.runtime.post_comments,
+        )
 
-    for raw in jira.search_estimate_issues():
+    for raw in jira.search_estimate_issues(include_keys=cfg.runtime.include_keys or None):
         issue = jira.to_issue(raw)
         if issue.key in exclude:
             log.info("Skipping excluded %s", issue.key)

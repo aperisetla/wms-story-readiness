@@ -40,6 +40,7 @@ class RuntimeConfig:
     output_dir: Path
     max_issues: int = 0
     exclude_keys: List[str] = field(default_factory=list)
+    include_keys: List[str] = field(default_factory=list)
     post_comments: bool = False
 
 
@@ -61,6 +62,25 @@ def _required(name: str) -> str:
     return val
 
 
+def validate_jira_base_url(url: str) -> None:
+    """Refuse sandbox URLs unless ALLOW_SANDBOX=1 is explicitly set.
+
+    The tool is intended to operate against the Ashley Furniture production
+    Jira tenant. Accidentally pointing it at ``*-sandbox.atlassian.net`` would
+    post grooming comments on stale ticket copies that nobody sees.
+    """
+    if "sandbox" in url.lower() and os.getenv("ALLOW_SANDBOX", "").strip() not in (
+        "1",
+        "true",
+        "True",
+    ):
+        raise RuntimeError(
+            f"Refusing to use Jira base URL '{url}' - it looks like a sandbox "
+            "tenant. This tool targets production. If you really need sandbox, "
+            "set ALLOW_SANDBOX=1 explicitly."
+        )
+
+
 def load_config(env_file: str | None = None) -> AppConfig:
     """Load configuration from the environment (and optional .env file)."""
     if env_file:
@@ -76,6 +96,7 @@ def load_config(env_file: str | None = None) -> AppConfig:
         label=os.getenv("JIRA_LABEL", "Estimate"),
         ac_field=os.getenv("JIRA_AC_FIELD", "customfield_10091").strip(),
     )
+    validate_jira_base_url(jira.base_url)
 
     provider = os.getenv("LLM_PROVIDER", "github_models").strip().lower()
     # GitHub Actions exposes its built-in token as GITHUB_TOKEN; accept that too.
@@ -106,6 +127,7 @@ def load_config(env_file: str | None = None) -> AppConfig:
         output_dir=Path(os.getenv("OUTPUT_DIR", "./output")).resolve(),
         max_issues=int(os.getenv("MAX_ISSUES", "0") or "0"),
         exclude_keys=_csv(os.getenv("EXCLUDE_KEYS", "")),
+        include_keys=_csv(os.getenv("INCLUDE_KEYS", "")),
         post_comments=os.getenv("POST_COMMENTS", "0").strip() in ("1", "true", "True"),
     )
     runtime.output_dir.mkdir(parents=True, exist_ok=True)

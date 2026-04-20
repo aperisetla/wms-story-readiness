@@ -36,12 +36,18 @@ class JiraClient:
         self.headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
     # -- search --------------------------------------------------------------
-    def search_estimate_issues(self) -> Iterator[Dict[str, Any]]:
-        projects = ",".join(self.cfg.projects)
-        jql = (
-            f'labels = "{self.cfg.label}" AND project in ({projects}) '
-            f"ORDER BY key DESC"
-        )
+    def search_estimate_issues(
+        self, include_keys: Optional[List[str]] = None
+    ) -> Iterator[Dict[str, Any]]:
+        if include_keys:
+            keys_clause = ",".join(f'"{k}"' for k in include_keys)
+            jql = f"key in ({keys_clause}) ORDER BY key DESC"
+        else:
+            projects = ",".join(self.cfg.projects)
+            jql = (
+                f'labels = "{self.cfg.label}" AND project in ({projects}) '
+                f"ORDER BY key DESC"
+            )
         fields = [
             "summary", "status", "labels", "priority", "issuetype",
             "description", "parent", "issuelinks", "subtasks",

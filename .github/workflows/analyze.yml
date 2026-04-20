@@ -11,6 +11,10 @@ on:
         description: "Comma-separated issue keys to skip"
         default: "WW-1310"
         required: false
+      include_keys:
+        description: "Comma-separated Jira keys to analyze (bypasses the Estimate label filter)"
+        default: ""
+        required: false
       max_issues:
         description: "Cap issues per run (0 = unlimited)"
         default: "0"
@@ -57,6 +61,7 @@ jobs:
           JIRA_LABEL: Estimate
           JIRA_AC_FIELD: customfield_10091
           EXCLUDE_KEYS: ${{ github.event.inputs.exclude || 'WW-1310' }}
+          INCLUDE_KEYS: ${{ github.event.inputs.include_keys || '' }}
           MAX_ISSUES: ${{ github.event.inputs.max_issues || '0' }}
           LLM_PROVIDER: github_models
           GH_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}

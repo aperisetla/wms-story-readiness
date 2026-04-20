@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from story_readiness.config import JiraConfig  # noqa: E402
+from story_readiness.config import JiraConfig, validate_jira_base_url  # noqa: E402
 from story_readiness.jira_client import JiraClient  # noqa: E402
 
 BASE_URL = os.getenv("JIRA_BASE_URL", "https://ashley-furniture-team.atlassian.net")
@@ -61,8 +61,12 @@ def main() -> int:
         print(f"ERROR: batch file not found: {BATCH}", file=sys.stderr)
         return 2
 
+    base_url = BASE_URL.rstrip("/")
+    validate_jira_base_url(base_url)
+    print(f"Jira base URL: {base_url}")
+
     cfg = JiraConfig(
-        base_url=BASE_URL.rstrip("/"),
+        base_url=base_url,
         email=EMAIL,
         api_token=TOKEN,
         projects=["WW", "WR"],
