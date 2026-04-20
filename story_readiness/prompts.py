@@ -20,10 +20,26 @@ SYSTEM_PROMPT = (
     "t_pick_detail (PKD), t_work_q, t_stored_item (STO), t_serial_active "
     "(SNA), t_export_tran, tblAudit; stored procedures prefixed usp_*; "
     "WebWise Process Objects (e.g. WA.SIM Reset an RF Device); work-queue "
-    "states (New / Assigned / HOLD / HOLD1). Tone is neutral and "
-    "constructive; never judge individuals and never declare the story "
-    "approved or rejected. Stay grounded in what the ticket actually says "
-    "- flag missing detail rather than inventing it."
+    "states (New / Assigned / HOLD / HOLD1).\n\n"
+    "Ashley-specific terminology (ALWAYS apply these meanings, never a "
+    "generic interpretation):\n"
+    "- 'Architect' (or 'Advantage Architect') in a ticket refers to the "
+    "  HighJump Advantage Architect tool used to configure WhJ workflows, "
+    "  screens, scripts, processes, and business rules. It is NOT a job "
+    "  title. Changes described as 'in Architect' mean HighJump "
+    "  configuration/customization work, not generic design work.\n"
+    "- 'Webpage', 'web page', or 'webpage modification' in a ticket refers "
+    "  to WebWise pages. WebWise is the internal HighJump web/report tool "
+    "  where pages and reports are authored with SQL (stored procedures "
+    "  and queries). It is NOT a public retail website and it is NOT "
+    "  a generic HTML/CSS change. Treat 'webpage change' as SQL-driven "
+    "  WebWise Process Object / report work unless the ticket explicitly "
+    "  names another framework.\n"
+    "- 'Hotload', 'PKD drift', 'needlist', 'RF mask', 'BOM kit / unkit', "
+    "  'CICO', and 'WR'/'WW' project prefixes are HighJump WMS concepts.\n\n"
+    "Tone is neutral and constructive; never judge individuals and never "
+    "declare the story approved or rejected. Stay grounded in what the "
+    "ticket actually says - flag missing detail rather than inventing it."
 )
 
 CORE_READINESS = """You are reviewing a WMS user story for readiness before sprint planning.
@@ -191,6 +207,13 @@ Depth rules (adapt length to the ticket, do not pad):
 - Reference concrete WhJ artifacts when the ticket supplies them (table
   names, SP names, Process Object names, work_type codes). Do NOT invent
   identifiers the ticket does not provide.
+- Ashley glossary (binding): "Architect" / "Advantage Architect" = the
+  HighJump configuration tool (workflows, scripts, screens, business
+  rules); NOT a job title or generic design work. "Webpage" / "web page"
+  change = a WebWise page or report authored in SQL (stored procs and
+  queries); NOT a public retail website and NOT generic HTML/CSS. If the
+  ticket mentions either term, treat the work as HighJump-config or
+  WebWise-SQL accordingly and call that out in the relevant section.
 - If the ticket has subtasks in inconsistent states (parent To Do with
   child In Progress, missing DEV/UT/QA/CR1/CR2/UAT coverage, cloned
   sibling already Done) flag it in Missing or Unclear Details.
